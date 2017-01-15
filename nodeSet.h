@@ -4,7 +4,7 @@
 
 Matrix typedefs with support for higher
 dimension matricies.
-
+test
 Adapted from:
 	-nVidia's CUDA Programming guide
 	-Robert Hochberg (1/24/16): http://bit.ly/2iA8jDc
