@@ -20,18 +20,7 @@ else.
 
 -Austin
 
-======== CUDA matrix operations v0.1 ========
-			By: Austin Bailie
 
-Various matrix operations computed on the GPU.
-Over-commented for educational purposes
-
-Adapted from:
-	-nVidia's CUDA Programming guide
-	-Other credits appear in their respective spots
-===========================================
-*/
-/*
 ============ Change Log ===================
 v0: 1/15/2017		- original
 
