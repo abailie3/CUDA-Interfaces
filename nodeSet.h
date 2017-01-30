@@ -1,5 +1,5 @@
 /*
-========= CUDA matrix typedefs v0.1 =========
+=== CUDA matrix typedefs/functions v0.2 ===
 			By: Austin Bailie
 
 Matrix typedefs with support for higher
@@ -20,6 +20,9 @@ v0.1: 1/21/2017		-added include protection
 					-added laySet to support neural net functionality
 					-relocated common functions from matOps.cu to this file
 
+v0.2: 1/29/2017
+					-added dTh and dX fields to Mat2D
+					-minor additions/changes to common functions
 
 ===========================================
 */
@@ -38,22 +41,26 @@ v0.1: 1/21/2017		-added include protection
 
 typedef struct Mat2D { //row then column
 	int rows;
+	int rrows;
 	int columns;
+	int run;
+	float* dTh; //new
+	float* dX; //new
 	float* cells;
 	struct Mat2D *next;
+	struct Mat2D *end;
 } Mat2D;//
 
 
 /*yeah I made some changes to the higher dimension
   structs... but I haven't needed them yet, so its not worth
   mentioning*/
-typedef struct { //row then column then level
-	int id;
-	int rows;
-	int columns;
-	int levels;
-	float* cells;
-} Mat3D;
+//typedef struct { //jagged 3d array cells(0) = rows in layer 0, cells(1) = columns  in layer 0, cells(cells(0)*cells(1)+2) = rows in layer 1 and so forth
+//	int layers;
+//	int count;
+//	float* d_nodes;
+//	float* cells;
+//} jagMat3D;
 
 typedef struct { //row then column then level then time
 	int id;
@@ -74,63 +81,13 @@ typedef struct { //row then column then level then time then fractalPlane
 	float* cells;
 } Mat5D;
 
-
 typedef struct {
 	int* nPl; //an array containing the number of nodes per layer
 	int layers; //number of layers
+	int bigX;
 }laySet;// new
-
-typedef struct {//I think this will probably be deleted eventually
-	int* taken;
-	int count = 0;
-	int newest;
-} IDs;
-		
 		
 //=========== Node Utilities =============
-/*IDs getID(IDs master, int layer = 0) {
-	//im not sure if this works... I may need to create a new array and reallocate memory etc...
-	int freeId = 10000001;
-	bool stop = false;
-	if (layer = 0) {
-		freeId = master.taken[master.count - 1] + 1;
-		master.taken[master.count + 1] = freeId;
-		master.count++;
-	}
-	else {
-		freeId = layer * 1000;
-		int i = freeId * master.count / (master.taken[master.count] - 1000);
-		for (; !stop & i > 0 & i < master.count;) {
-			if (freeId < master.taken[i]) {
-				if (freeId > master.taken[i - 1]) {
-					stop = true;
-					i--;
-				}
-				else {
-					i--;
-				}
-
-			}
-			else {
-				if (freeId < master.taken[i + 1]) {
-					stop = true;
-				}
-				else {
-					i++;
-				}
-			}
-		}
-		freeId = master.taken[i] + 1;
-		for (int c = i + 1; c < master.count; ++c) {
-			master.taken[c + 1] = master.taken[c];
-		}
-		master.count++;
-		master.taken[i + 1] = freeId;
-		master.newest = freeId;
-	}
-	return master;
-	
-}*/
 
 void print2DMat(Mat2D out, const char* prompt = "") { 
 	/*simple method to print matrix
@@ -139,12 +96,24 @@ void print2DMat(Mat2D out, const char* prompt = "") {
 	printf("%sMatrix Values:\n{\n", prompt); //just making it pretty
 	for (int i = 0; i < out.rows; ++i) { //iterate through each row/col and print
 		printf("    "); //again, making pretty
-		for (int t = 0; t < out.columns; ++t)
+		for (int t = 0; t < out.columns; ++t) {
 			printf("%f, ", out.cells[i*out.columns + t]);
+		}
+		printf("\n");
+	}
+	printf("}\n");
+
+	printf("%sUpdate Values:\n{\n", prompt); //just making it pretty
+	for (int c = 0; c < out.rows; ++c) { //iterate through each row/col and print
+		printf("    "); //again, making pretty
+		for (int b = 0; b < out.columns; ++b) {
+			printf("%f, ", out.dTh[c*out.columns + b]);
+		}
 		printf("\n");
 	}
 	printf("}\n");
 	//~~ALB
+	return;
 }
 
 void pprint2DMat(Mat2D* out, const char* prompt = "") { 
@@ -158,7 +127,17 @@ void pprint2DMat(Mat2D* out, const char* prompt = "") {
 			printf("%f, ", out->cells[i*out->columns + t]);
 		printf("\n");
 	}
-	printf("}\n");
+	if (out->dTh != NULL){
+		printf("}\n");
+		printf("%sUpdate Values:\n{\n", prompt); //just making it pretty
+		for (int i = 0; i < out->rows; ++i) { //iterate through each row/col and print
+			printf("    "); //again, making pretty
+			for (int t = 0; t < out->columns; ++t)
+				printf("%f, ", out->dTh[i*out->columns + t]);
+			printf("\n");
+		}
+		printf("}\n");
+	}
 	//~~ALB
 }
 
@@ -180,6 +159,24 @@ Mat2D vecToMat2D(float f_vector[], int f_rows, int f_cols) {
 		for (int j = 0; j < f_cols; ++j)
 			out.cells[i*f_cols + j] = f_vector[i*f_cols + j];
 	return out;
+	//~~ALB
+}
+
+void vecToMat2DP(float f_vector[], Mat2D* inmat) {
+	/*convert vector to a mat2D... this is a function for use on the pointers similar to the one above
+	needs: nodeSet.h, print2DMat(Mat2D out)
+	I don't really need stdlib.h, but malloc shows a pesky error if not... will compile without
+	*/
+
+
+	//allocate memory for matrix
+	inmat->cells = (float*)malloc(inmat->rows * inmat->columns * sizeof(float));
+
+	//assign values to matrix
+	for (int i = 0; i < inmat->rows; ++i)
+		for (int j = 0; j <  inmat->columns; ++j)
+			inmat->cells[i*inmat->columns + j] = f_vector[i*inmat->columns + j];
+	return;
 	//~~ALB
 }
 
