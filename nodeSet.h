@@ -32,14 +32,15 @@ v0.2: 1/29/2017
 #define __NODESET_H_INCLUDED__
 
 //============== Includes ================
-#include "Timer.h"
-#include <time.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include <math.h>
 #include <iostream>
-#include <vector>
 #include <thrust/device_vector.h>
+#include <time.h>
+#include "Timer.h"
+#include <math.h>
+#include <vector>
+
 
 //========== Custom Typedefs =============
 
@@ -89,7 +90,7 @@ typedef struct {
 	int* nPl; //an array containing the number of nodes per layer
 	int layers; //number of layers
 	int bigX;
-}laySet;// new
+}LaySet;// new
 
 //=========== Classses==============
 
@@ -121,8 +122,6 @@ Config::Config (std::string c = "") {
 	//std::vector< std::vector<std::string> > lines;
 	std::vector< std::vector<std::string> > lines;
 	std::vector< std::string > w;
-	
-
 
 	std::ifstream fIn(cfg);
 
@@ -133,14 +132,15 @@ Config::Config (std::string c = "") {
 		}
 		lines.push_back(w);
 		s.clear();//free mem
+		w.clear();
 	}
 	fIn.close();
 	//setting the different variables from the parsed config file
 	in = lines[0][1];
 	act = lines[1][1];
 	out = lines[2][1];
-	batchSize = stoi(lines[3][1]);
-	alpha = stof(lines[4][1]);
+	batchSize = std::stoi(lines[3][1]);
+	alpha = std::stof(lines[4][1]);
 	layers = lines[5].size() - 1;
 	nodesPerlayer = (int*)malloc(layers * sizeof(int));
 	for (int i = 0; i < layers; ++i) {
@@ -167,70 +167,29 @@ Config::~Config() {
 }
 
 
-//=========== this code below may be removed/or implemented
-//Config::Config (std::string c) {
-//	cfg = c;
-//	loaded = false;
-//}
-
-//void Config::reLoadConfig(std::string c = "") {
-//	if (c != "") {
-//		cfg = c;
-//	}
-//	std::vector< std::vector<std::string> > lines;
-//	std::vector<std::string> w;
-//	std::ifstream fIn(cfg);
-//	
-//	for (std::string ln; getline(fIn, ln);) {
-//		std::stringstream s(ln);
-//		for (std::string wd; getline(s, wd, ',');) {
-//			w.push_back(wd);
-//		}
-//		lines.push_back(w);
-//		w.clear();
-//		s.clear();
-//	}
-//	fIn.close();
-//	in = lines.at(0).at(1);
-//	act = lines.at(1).at(1);
-//	out = lines.at(2).at(1);
-//	batchSize = stoi(lines.at(3).at(1));
-//	alpha = stof(lines.at(4).at(1));
-//	layers = lines.at(5).size() - 1;
-//	nodesPerlayer = (int*)malloc(layers * sizeof(int));
-//	for (int i = 0; i < layers; ++i) {
-//		nodesPerlayer[i] = stoi(lines.at(5).at(i + 1));
-//	};
-//	lines.clear;
-//}
-
-//======
-
-//using namespace std;
-
 
 		
 //=========== Node Utilities =============
 
-void print2DMat(Mat2D out, const char* prompt = "") { 
+void Print2DMatrix(Mat2D matrix, const char* label = "") { 
 	/*simple method to print matrix
 	  needs: nodeSet.h, string.h
 	  */
-	printf("%sMatrix Values:\n{\n", prompt); //just making it pretty
-	for (int i = 0; i < out.rows; ++i) { //iterate through each row/col and print
+	printf("%sMatrix Values:\n{\n", label); //just making it pretty
+	for (int i = 0; i < matrix.rows; ++i) { //iterate through each row/col and print
 		printf("    "); //again, making pretty
-		for (int t = 0; t < out.columns; ++t) {
-			printf("%f, ", out.cells[i*out.columns + t]);
+		for (int t = 0; t < matrix.columns; ++t) {
+			printf("%f, ", matrix.cells[i*matrix.columns + t]);
 		}
 		printf("\n");
 	}
 	printf("}\n");
 
-	printf("%sUpdate Values:\n{\n", prompt); //just making it pretty
-	for (int c = 0; c < out.rows; ++c) { //iterate through each row/col and print
+	printf("%sUpdate Values:\n{\n", label); //just making it pretty
+	for (int c = 0; c < matrix.rows; ++c) { //iterate through each row/col and print
 		printf("    "); //again, making pretty
-		for (int b = 0; b < out.columns; ++b) {
-			printf("%f, ", out.dTh[c*out.columns + b]);
+		for (int b = 0; b < matrix.columns; ++b) {
+			printf("%f, ", matrix.dTh[c*matrix.columns + b]);
 		}
 		printf("\n");
 	}
@@ -239,24 +198,24 @@ void print2DMat(Mat2D out, const char* prompt = "") {
 	return;
 }
 
-void pprint2DMat(Mat2D* out, const char* prompt = "") { 
+void PointerPrint2DMatrix(Mat2D* matrix, const char* label = "") { 
 	/*simple method to print matrix
 	needs: nodeSet.h, string.h
 	*/
-	printf("%sMatrix Values:\n{\n", prompt); //just making it pretty
-	for (int i = 0; i < out->rows; ++i) { //iterate through each row/col and print
+	printf("%sMatrix Values:\n{\n", label); //just making it pretty
+	for (int i = 0; i < matrix->rows; ++i) { //iterate through each row/col and print
 		printf("    "); //again, making pretty
-		for (int t = 0; t < out->columns; ++t)
-			printf("%f, ", out->cells[i*out->columns + t]);
+		for (int t = 0; t < matrix->columns; ++t)
+			printf("%f, ", matrix->cells[i*matrix->columns + t]);
 		printf("\n");
 	}
-	if (out->dTh != NULL){
+	if (matrix->dTh != NULL){
 		printf("}\n");
-		printf("%sUpdate Values:\n{\n", prompt); //just making it pretty
-		for (int i = 0; i < out->rows; ++i) { //iterate through each row/col and print
+		printf("%sUpdate Values:\n{\n", label); //just making it pretty
+		for (int i = 0; i < matrix->rows; ++i) { //iterate through each row/col and print
 			printf("    "); //again, making pretty
-			for (int t = 0; t < out->columns; ++t)
-				printf("%f, ", out->dTh[i*out->columns + t]);
+			for (int t = 0; t < matrix->columns; ++t)
+				printf("%f, ", matrix->dTh[i*matrix->columns + t]);
 			printf("\n");
 		}
 		printf("}\n");
@@ -264,28 +223,28 @@ void pprint2DMat(Mat2D* out, const char* prompt = "") {
 	//~~ALB
 }
 
-Mat2D vecToMat2D(float f_vector[], int f_rows, int f_cols) { 
+Mat2D ArrayToMat2D(float in_array[], int in_rows, int in_columns) { 
 	/*convert vector to a mat2D
 	  needs: nodeSet.h, print2DMat(Mat2D out)
 	  I don't really need stdlib.h, but malloc shows a pesky error if not... will compile without
 	  */
 
 	Mat2D out;//output matrix
-	out.rows = f_rows;
-	out.columns = f_cols;
+	out.rows = in_rows;
+	out.columns = in_columns;
 
 	//allocate memory for matrix
 	out.cells = (float*)malloc(out.rows*out.columns * sizeof(float));
 
 	//assign values to matrix
-	for (int i = 0; i < f_rows; ++i)
-		for (int j = 0; j < f_cols; ++j)
-			out.cells[i*f_cols + j] = f_vector[i*f_cols + j];
+	for (int i = 0; i < in_rows; ++i)
+		for (int j = 0; j < in_columns; ++j)
+			out.cells[i*in_columns + j] = in_array[i*in_columns + j];
 	return out;
 	//~~ALB
 }
 
-void vecToMat2DP(float f_vector[], Mat2D* inmat) {
+void ArrayPointerToMat2D(float f_vector[], Mat2D* inmat) {
 	/*convert vector to a mat2D... this is a function for use on the pointers similar to the one above
 	needs: nodeSet.h, print2DMat(Mat2D out)
 	I don't really need stdlib.h, but malloc shows a pesky error if not... will compile without
@@ -303,7 +262,7 @@ void vecToMat2DP(float f_vector[], Mat2D* inmat) {
 	//~~ALB
 }
 
-Mat2D cudaMSend2D(Mat2D iM, bool copy, const char* iD = "matrix") { 
+Mat2D CudaSendMat2D(Mat2D input_matrix, bool copy, const char* label = "matrix") { 
 /*Handles GPU memory allocaion/memory transfer to GPU.												
   copy boolean determines if the matrix values should be copied into the allocated memory on GPU
   iD takes a constant char pointer of the matrix name/ID
@@ -313,75 +272,57 @@ Mat2D cudaMSend2D(Mat2D iM, bool copy, const char* iD = "matrix") {
 */
 
 //device's copy of the input matrix
-	Mat2D d_M;
+	Mat2D d_matrix;
 	//d_M.id = iM.id;
-	d_M.rows = iM.rows;
-	d_M.columns = iM.columns;
+	d_matrix.rows = input_matrix.rows;
+	d_matrix.columns = input_matrix.columns;
 
 	//allocating memory on GPU for d_M
-	cudaError_t errCode = cudaMalloc(&d_M.cells, d_M.rows * d_M.columns * sizeof(float));
-	printf("Allocating memory for %s on GPU: %s\n", iD, cudaGetErrorString(errCode));
+	cudaError_t errCode = cudaMalloc(&d_matrix.cells, d_matrix.rows * d_matrix.columns * sizeof(float));
+	printf("Allocating memory for %s on GPU: %s\n", label, cudaGetErrorString(errCode));
 
 	//parameter copy decides wheter to copy the iM values to d_M located on GPU
 	if (copy) {
-		errCode = cudaMemcpy(d_M.cells, iM.cells, d_M.rows * d_M.columns * sizeof(float), cudaMemcpyHostToDevice);
-		printf("Copying %s to GPU: %s\n", iD, cudaGetErrorString(errCode));
+		errCode = cudaMemcpy(d_matrix.cells, input_matrix.cells, d_matrix.rows * d_matrix.columns * sizeof(float), cudaMemcpyHostToDevice);
+		printf("Copying %s to GPU: %s\n", label, cudaGetErrorString(errCode));
 	}
-	return d_M;
+	return d_matrix;
 
 	//~~ALB
 }
 
-std::istream& csv(std::istream& inp) {
+std::istream& Csv(std::istream& inp) {
 	if ((inp >> std::ws).peek() != std::char_traits<char>::to_int_type(',')) {
 		inp.setstate(std::ios_base::failbit);
 	}
 	return inp.ignore();
 }
 
-Mat2D* csvToMat2D(std::string inStr, int cols = 1) {
+Mat2D* CsvToMat2D(std::string input_string, int columns = 1) {
 	std::vector<float> values;
-	std::ifstream fin(inStr);
+	std::ifstream fin(input_string);
 	for (std::string li; std::getline(fin, li);) {
 		std::istringstream in;
 		in.clear();
 		in.str(li);
-		for (float val; in >> val; in >> csv) {
+		for (float val; in >> val; in >> Csv) {
 			values.push_back(val);
 		}
 	}
 
 	Mat2D* out = (Mat2D*)malloc(sizeof(Mat2D));
 	out->cells = (float*)malloc(values.size() * sizeof(float));
-	out->columns = cols;
-	out->rows = values.size() / cols;
+	out->columns = columns;
+	out->rows = values.size() / columns;
 	for (int i = 0; i < (int)values.size(); ++i) {
 		float &t = values.at(i);
 		out->cells[i] = t;
 	}
 	return out;
 };
-//string csvGetString(string fPath, int lNum, int cNum, int sz = 1) {
-//	std::vector<vector<string>> line;
-//	std::vector<string> word;
-//	string val;
-//	Config cfg;
-//	bool EX = false;
-//	std::ifstream fIn(fPath);
-//	int l = 0;
-//	for (std::string line; std::getline(fIn, line) && !EX;) {
-//		if (l == lNum) {
-//			int c = 0;
-//			for (std::string word; std::getline(fIn, line, ',');) {
-//				if (c == cNum) {
-//
-//				}
-//			}
-//		}
-//	}
-//}
 
-void outToCsv(float* out, Mat2D* act, std::ofstream* outFile, int rn) {
+
+void ArrToCsv(float* out, Mat2D* act, std::ofstream* outFile, int rn) {
 	float errSq;
 	int c = act->columns;
 	*outFile << std::endl;

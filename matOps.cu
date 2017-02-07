@@ -39,107 +39,95 @@ v0.2: 1/29/2017		- implemented working neural network functionality:
 					- current technology will successfuly perform batch gradient descent
 					  with 0 errors on Cuda-memcheck
 
+
+v0.X:				-changed pNodesSetup to initNodes
+
 ===========================================
 */
 //required headers:
-#include "nodeSet.h" //v0; includes stdio.h and now math.h
-//optional headers:
-//#include <stdlib.h> //so malloc doesn't show as error... will compile without
+#include "nodeSet.h" 
+
 
 using namespace std;
-#define BLKSZ 16
 
-__global__ void mAddKernel2D(Mat2D d_a, Mat2D d_b, Mat2D d_o) {
-	/*CUDA kernel for 2d matrix addition
-	  needs: nodeSet.h,
-	  I don't really need cuda_runtime.h or device_launch parameters, but they prevent errors... will compile without
-	*/
+#define BLKSZ 16
+///////////////////////////////////////////////////////////////////////////////
+/*CUDA kernel for 2d matrix addition
+*/
+__global__ void MatrixAddKernel(Mat2D d_matrix_a, Mat2D d_matrix_b, 
+                                Mat2D d_output) {
 	int r = blockDim.y * blockIdx.y + threadIdx.y; //getting row based on CUDA thread/block index
 	int c = blockDim.x * blockIdx.x + threadIdx.x; //getting column based on CUDA thread/block index
 	
 	//if out-of-bounds stop
-	if (r > d_o.rows || c > d_o.columns) return;
+	if (r > d_output.rows || c > d_output.columns) return;
 
 	//add
-	d_o.cells[r * d_o.columns + c] = d_a.cells[r * d_o.columns + c] + d_b.cells[r * d_o.columns + c];
-	//~~ALB
+	d_output.cells[r * d_output.columns + c] = d_matrix_a.cells[r * d_output.columns + c] + d_matrix_b.cells[r * d_output.columns + c];
 }
 
-__global__ void mSubKernel2D(Mat2D d_a, Mat2D d_b, Mat2D d_o) {
-	/*CUDA kernel for 2d matrix subtraction
-	  needs: nodeSet.h,
-	  I don't really need cuda_runtime.h or device_launch parameters, but they prevent errors... will compile without
-	*/
+/*CUDA kernel for 2d matrix subtraction
+*/
+__global__ void MatrixSubtractKernel(Mat2D d_matrix_a, Mat2D d_matrix_b, 
+                                     Mat2D d_output) {
 	int r = blockDim.y * blockIdx.y + threadIdx.y; //getting row based on CUDA thread/block index
 	int c = blockDim.x * blockIdx.x + threadIdx.x; //getting column based on CUDA thread/block index
 
 	//if out-of-bounds stop
-	if (r > d_o.rows || c > d_o.columns) return;
+	if (r > d_output.rows || c > d_output.columns) return;
 
 	//subtract
-	d_o.cells[r * d_o.columns + c] = d_a.cells[r * d_o.columns + c] - d_b.cells[r * d_o.columns + c];
+	d_output.cells[r * d_output.columns + c] = d_matrix_a.cells[r * d_output.columns + c] - d_matrix_b.cells[r * d_output.columns + c];
 }
 
-__global__ void mTransKernel2D(Mat2D d_i, Mat2D d_o) {
-	/*CUDA kernel for 2d matrix subtraction
-	  needs: nodeSet.h
-	  I don't really need cuda_runtime.h or device_launch parameters, but they prevent errors... will compile without
-	*/
+/*CUDA kernel for 2d matrix subtraction
+*/
+__global__ void MatrixTransposeKernel(Mat2D d_input, Mat2D d_output) {
 	int r = blockIdx.y * blockDim.y + threadIdx.y; //getting row based on CUDA thread/block index
 	int c = blockIdx.x * blockDim.x + threadIdx.x; //getting column based on CUDA thread/block index
 
 	//if out-of-bounds stop
-	if (r > d_o.rows || c > d_o.columns) return;
+	if (r > d_output.rows || c > d_output.columns) return;
 	
 	//switch rows and columns
-	d_o.cells[r * d_o.columns + c] = d_i.cells[c * d_i.columns + r];
+	d_output.cells[r * d_output.columns + c] = d_input.cells[c * d_input.columns + r];
 }
 
-__global__ void mMultKernel2D(Mat2D d_a, Mat2D d_b, Mat2D d_c) { 
-	/*CUDA kernel for 2D matrix multiplication
-	  needs: nodeSet.h,
-	  I don't really need cuda_runtime.h or device_launch parameters, but they prevent errors... will compile without
-	  
-	  Adapted from:
-	  -Robert Hochberg (1/24/16): http://bit.ly/2iA8jDc
-	  */
-
+/*CUDA kernel for 2D matrix multiplication
+Adapted from:
+-Robert Hochberg (1/24/16): http://bit.ly/2iA8jDc
+*/
+__global__ void MatrixMultiplyKernel(Mat2D d_matrix_a, Mat2D d_matrix_b, 
+                                     Mat2D d_c) { 
 	float oVal = 0;//output value
 
 	int r = blockIdx.y * blockDim.y + threadIdx.y; //getting row based on CUDA thread/block index
 	int c = blockIdx.x * blockDim.x + threadIdx.x; //getting column based on CUDA thread/block index
 
-    //if out-of-bounds stop
-	//if (r > d_c.rows || c > d_c.columns) return; So I changed my index out of bounds protection, see below
-
 	//add up each A(r,i)*B(i,c) into oVal
 	if (r < d_c.rows && c < d_c.columns) {
-		for (int i = 0; i < d_a.columns; ++i)
-			oVal += d_a.cells[r * d_a.columns + i] * d_b.cells[i*d_b.columns + c];
+		for (int i = 0; i < d_matrix_a.columns; ++i)
+			oVal += d_matrix_a.cells[r * d_matrix_a.columns + i] * d_matrix_b.cells[i*d_matrix_b.columns + c];
 	}
 	else {
 		return;
 	}
 	//assign the oVal to the output matrix
 	d_c.cells[r * d_c.columns + c] = oVal;
-	//~~ALB
 }
 
-__device__ void logistic2DD(Mat2D d_layer, Mat2D d_prev, int r, int c, int lr, int lc) {
-	/*CUDA kernel for logistic nodes, this is the main forward (input to output) function
+/*CUDA kernel/device function for logistic nodes:
+This is the main forward (input to output) function.	This function is going
+forward on the recursion path of the host function
+*/
+__device__ void LogisticNodeFunctionDevice(Mat2D d_layer, Mat2D d_prev, 
+                                           int r, int c, int lr, int lc) {
 
-	this function is going forward on the recursion path of the host function
-	needs: nodeset.h, math.h
-	*/
-	//int r = blockDim.y * blockIdx.y + threadIdx.y; //getting row based on CUDA thread/block index
-	//int c = blockDim.x * blockIdx.x + threadIdx.x; //getting column based on CUDA thread/block index
-
-	//if (r < 1 && c < lc) { //we are only updating the first layer (node outputs) of the array
 	float l = d_layer.cells[lc + c];//add in the bias
 
-													/*we need to add up all of x*w of the previous layer, where:
-													x is the output of a node in the previous layer, stored in row 1 of the previous layer
-													w is the weight of the corresponding output, stored in column c of the current layer*/
+	/*we need to add up all of x*w of the previous layer, where:
+	x is the output of a node in the previous layer, stored in row 1 of the previous layer
+	w is the weight of the corresponding output, stored in column c of the current layer*/
 	for (int i = 2; i < lr;) { //start at 2 since 0 has the outputs and 1 has the bias
 
 		l += d_layer.cells[i * lc + c] * d_prev.cells[i - 2];
@@ -156,15 +144,10 @@ __device__ void logistic2DD(Mat2D d_layer, Mat2D d_prev, int r, int c, int lr, i
 	{
 		return;
 	}*/
-	//~~ALB
+
 }
 
-__global__ void logistic2D(Mat2D d_layer, Mat2D d_prev) {
-	/*CUDA kernel for logistic nodes, this is the main forward (input to output) function
-
-	  this function is going forward on the recursion path of the host function
-	  needs: nodeset.h, math.h
-	  */
+__global__ void LogisticNodeFunctionKernel(Mat2D d_layer, Mat2D d_prev) {
 	int r = blockDim.y * blockIdx.y + threadIdx.y; //getting row based on CUDA thread/block index
 	int c = blockDim.x * blockIdx.x + threadIdx.x; //getting column based on CUDA thread/block index
 	//printf("blockIdx.x %i, blockIdx.y %i\n", blockIdx.x, blockIdx.y);
@@ -172,46 +155,26 @@ __global__ void logistic2D(Mat2D d_layer, Mat2D d_prev) {
 	int lc = d_layer.columns;
 	//printf("r %i, lr %i, c %i, lc %i, bIx %i, bIy %i, tIx %i, tIy %i\n", r, lr, c, lc, blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y);
 	if (r < 1 && c < lc) {
-		logistic2DD(d_layer, d_prev, r, c, lr, lc);
+		LogisticNodeFunctionDevice(d_layer, d_prev, r, c, lr, lc);
 	}
 	else {
 		return;
 	}
-	//if (r < 1 && c < d_layer.columns) { //we are only updating the first layer (node outputs) of the array
-	//	float l = d_layer.cells[d_layer.columns + c];//add in the bias
-
-	//	/*we need to add up all of x*w of the previous layer, where:
-	//			x is the output of a node in the previous layer, stored in row 1 of the previous layer
-	//			w is the weight of the corresponding output, stored in column c of the current layer*/
-	//	for (int i = 2; i < d_layer.rows;) { //start at 2 since 0 has the outputs and 1 has the bias
-
-	//		l += d_layer.cells[i * d_layer.columns + c] * d_prev.cells[i - 2];
-	//		
-	//		//printf("%i,%i>>l: %f, x: %f, w: %f\n", i -2, c, l, d_prev.cells[i - 2], d_layer.cells[i * d_layer.columns + c]);
-	//		i++;
-	//	}
-
-	//	d_layer.cells[c] = 1 / (1 + exp(-l)); //now we calculate the output of this node
-	//	printf("Row: %i, Col: %i, Input: %f, Value: %f \n", r, c, l, d_layer.cells[c]);
-
-	//}
-	//else
-	//{
-	//	return;
-	//}
-	//~~ALB
 }
 
-__device__ float rowSumDX(Mat2D d_a, int r) {
+
+__device__ float RowSumDxDevice(Mat2D d_matrix_a, int r) {
 	float out = 0;
-	int cc = d_a.columns;
+	int cc = d_matrix_a.columns;
 	for (int i = 0; i < cc; ++i) {
-		out += d_a.dX[r * cc + i];
+		out += d_matrix_a.dX[r * cc + i];
 	}
 	return out;
 }
 
-__device__ void nodeBackwardLogD(Mat2D d_prev, Mat2D d_cur, Mat2D d_next, int r, int c, int cr, int cc) {
+__device__ void LogisticBackpropagationDevice(Mat2D d_previous, Mat2D d_current, 
+                                              Mat2D d_next, int row, int col, 
+                                              int max_row, int max_col) {
 	/*CUDA kernel for back propagation on logistic nodes
 	the .dTh matrix is a matrix of the change in weights for the corresponding node-input pair
 	the .dX matrix is a matrix of the change in the cascaded error term for the corresponding node-input pair
@@ -225,31 +188,31 @@ __device__ void nodeBackwardLogD(Mat2D d_prev, Mat2D d_cur, Mat2D d_next, int r,
 	//int cr = d_current.rows;
 	//int cc = d_current.columns;
 
-	if (r > 0 && r < cr && c < cc) { //only operating on the weights and bias
+	if (row > 0 && row < max_row && col < max_col) { //only operating on the weights and bias
 		//printf("%f", d_current.dX[c]); //debug code
 		
-		float tX = d_cur.cells[c]; //initialize variable for the dX/dL term
+		float tX = d_current.cells[col]; //initialize variable for the dX/dL term
 		float bX;
 		bX = tX - (tX * tX); //the (x- x^2) term of dX/dL
 		
 		//printf("If 1 True\nR: %i, C: %i\n", r, c); //debug code
 		//printf("d_next.columns %i\n", d_next.columns); //debug code
 
-		float DX = d_cur.dX[c]; //the total dX/dx of the next layer is sumed into this layer in the first row of the .dX matrix
+		float DX = d_current.dX[col]; //the total dX/dx of the next layer is sumed into this layer in the first row of the .dX matrix
 		//printf(" dbX_n %f ", dbX_n); //debug code
 
-		if (r == 1) { //change to bias
-			float dB = d_cur.dTh[r * cc + c];
+		if (row == 1) { //change to bias
+			float dB = d_current.dTh[row * max_col + col];
 			dB = dB + bX * DX;
-			d_cur.dTh[r * cc + c] = dB;
+			d_current.dTh[row * max_col + col] = dB;
 			//d_current.dX[d_current.columns + c] = dbX_n;
 		}
 		else { //change to the weights (theta)
-			float dTh = d_cur.dTh[r * cc + c];
-			float pX = d_prev.cells[r-2];
+			float dTh = d_current.dTh[row * max_col + col];
+			float pX = d_previous.cells[row-2];
 			dTh += DX * bX * pX;
-			d_cur.dTh[r * cc + c] = dTh;
-			d_cur.dX[r * cc + c] = d_cur.dX[c] * bX * d_cur.cells[r * cc + c];
+			d_current.dTh[row * max_col + col] = dTh;
+			d_current.dX[row * max_col + col] = d_current.dX[col] * bX * d_current.cells[row * max_col + col];
 
 			//d_prev.dX[r - 2] = d_prev.dX[r - 2] + DX*bX*d_current.cells[r * d_current.columns + c]; //sum the dX/dx layer for the previous layer... this needs to go after syncthreads
 		}
@@ -257,19 +220,19 @@ __device__ void nodeBackwardLogD(Mat2D d_prev, Mat2D d_cur, Mat2D d_next, int r,
 	else {
 		return;
 	}
-	//~~ALB
 }
 
-__global__ void nodeBackwardLog(Mat2D d_prev, Mat2D d_cur, Mat2D d_next) {
+__global__ void LogisticBackpropagationKernel(Mat2D d_prev, Mat2D d_cur, 
+                                              Mat2D d_next) {
 	int r = blockIdx.y * blockDim.y + threadIdx.y;
 	int c = blockIdx.x * blockDim.x + threadIdx.x;
 	int cr = d_cur.rows;
 	int cc = d_cur.columns;
-	nodeBackwardLogD(d_prev, d_cur, d_next, r, c, cr, cc);
+	LogisticBackpropagationDevice(d_prev, d_cur, d_next, r, c, cr, cc);
 	__syncthreads();
 
 	if (r > 1 && r - 2 < d_prev.columns && c == 0) {
-		float p = rowSumDX(d_cur, r);
+		float p = RowSumDxDevice(d_cur, r);
 		d_prev.dX[r - 2] = d_prev.dX[r - 2] + p;
 	}
 	else {
@@ -278,73 +241,67 @@ __global__ void nodeBackwardLog(Mat2D d_prev, Mat2D d_cur, Mat2D d_next) {
 
 }
 
-__device__ void outPivotLogD(Mat2D d_prev, Mat2D d_cur, Mat2D actual, int rn, int r, int c, int cr, int cc) {
-	/*CUDA kernel for error comparison on logistic nodes
-	the .dTh matrix is a matrix of the change in weights for the corresponding node-input pair
-	the .dX matrix is a matrix of the change in the cascaded error term for the corresponding node-input pair
-	the first row of .dX holds the sum  of the .dX terms in the next layer of the corresponding input
+/*CUDA kernel/device function for error comparison on logistic nodes:
 
-	This code is the pivot of the recursive function (aka from going forward to going backward)
-	needs: nodeset.h, math.h
-	*/
-	
-	//int r = blockIdx.y * blockDim.y + threadIdx.y;
-	//int c = blockIdx.x * blockDim.x + threadIdx.x;
-	//int cr = d_cur.rows;
-	//int cc = d_cur.columns;
+The .dTh matrix is a matrix of the change in weights for the corresponding 
+node-input pair. The .dX matrix is a matrix of the change in the cascaded error
+term for the corresponding node-input pair. The first row of .dX holds the sum
+of the .dX terms in the next layer of the corresponding input
 
-	if (r > 0 && r < cr && c < cc) {
+This code is the pivot of the recursive function (aka from going forward to going backward)
+*/
+__device__ void LogisticOutputLayerPivotDevice(Mat2D d_previous, Mat2D d_current, 
+                                               Mat2D d_actual, int run, int row, 
+                                               int col, int max_row, int max_col) {
+
+	if (row > 0 && row < max_row && col < max_col) {
 		//printf("If 1 True\nR: %i, C: %i\n", r, c); //debug code
 		//printf("d_cur.columns %i\n", d_cur.columns); //debug code
-		float bX = d_cur.cells[c];
+		float bX = d_current.cells[col];
 		bX = bX - (bX * bX);
 		//printf("piv c: %i, run: %i, actual: %f\n", c, rn, actual.cells[rn * actual.columns + c]); //debug code
-		float act = actual.cells[rn * actual.columns + c];
-		float err = d_cur.cells[c] - act;
+		float act = d_actual.cells[run * d_actual.columns + col];
+		float err = d_current.cells[col] - act;
 		printf("Error Squared: %f\n, actual: %f\n", err * err, act);
 		//printf("pre if 2\n");
 		
-		if (r == 1) { //change to bias
+		if (row == 1) { //change to bias
 			//printf("True-2\n"); //debug code
 			//printf("d_cur.columns %i", d_cur.columns); //debug code
-			float dB = d_cur.dTh[r * cc + c];
+			float dB = d_current.dTh[row * max_col + col];
 			dB = dB + bX * err;
-			if (c == 0) {
-				d_cur.dX[cc] += err*err;
+			if (col == 0) {
+				d_current.dX[max_col] += err*err;
 			}
-			//d_cur.dTh[r *cc + c] = dB;
-			//d_cur.dX[cc + c] = bX * err;
 			//printf("dTh(%i, %i): %f, dX: %f\n", r, c, d_cur.dTh[r * d_cur.columns + c], d_cur.dX[d_cur.columns + c]); //debug code
 		}
 		else { //change to the weights (theta)
 			//printf("Else-2\n"); //debug code
-			float dTh = d_cur.dTh[r * cc + c];
-			float pX = d_prev.cells[r-2];
+			float dTh = d_current.dTh[row * max_col + col];
+			float pX = d_previous.cells[row-2];
 			dTh += err * bX * pX;
-			d_cur.dTh[r * cc + c] = dTh;
-			d_cur.dX[r *cc + c] = err * bX * d_cur.cells[r * cc + c];
-
-			//d_prev.dX[r - 2] = d_prev.dX[r - 2] + d_cur.dX[r * d_cur.columns + c]; //sum the dX/dx layer for the previous layer //needs to be in sync threads
+			d_current.dTh[row * max_col + col] = dTh;
+			d_current.dX[row *max_col + col] = err * bX * d_current.cells[row * max_col + col];
 		}
 	}
 	else
 	{
 		return;
 	}
-	//~~ALB
 }
 
-__global__ void outPivotLog(Mat2D d_prev, Mat2D d_cur, Mat2D actual, int rn) {
+__global__ void LogisticOutputLayerPivotKernel(Mat2D d_previous, Mat2D d_current, 
+                                               Mat2D actual, int run) {
 	int r = blockIdx.y * blockDim.y + threadIdx.y;
 	int c = blockIdx.x * blockDim.x + threadIdx.x;
-	int cr = d_cur.rows;
-	int cc = d_cur.columns;
-	outPivotLogD(d_prev, d_cur, actual, rn, r, c, cr, cc);
+	int cr = d_current.rows;
+	int cc = d_current.columns;
+	LogisticOutputLayerPivotDevice(d_previous, d_current, actual, run, r, c, cr, cc);
 	__syncthreads();
 
-	if (r > 1 && r - 2 < d_prev.columns && c == 0) {
-		float p = rowSumDX(d_cur, r);
-		d_prev.dX[r - 2] = d_prev.dX[r - 2] + p;
+	if (r > 1 && r - 2 < d_previous.columns && c == 0) {
+		float p = RowSumDxDevice(d_current, r);
+		d_previous.dX[r - 2] = d_previous.dX[r - 2] + p;
 	}
 	else {
 		return;
@@ -352,10 +309,10 @@ __global__ void outPivotLog(Mat2D d_prev, Mat2D d_cur, Mat2D actual, int rn) {
 
 }
 
-__global__ void updateNodes(Mat2D d_nodes, float alpha) {
-	/*CUDA kernel for weight/bias updates
-	  This node is the update step of the learning process
-	*/
+/*CUDA kernel for weight/bias updates
+This node is the update step of the learning process
+*/
+__global__ void UpdateNodesKernel(Mat2D d_nodes, float alpha) {
 	int r = blockIdx.y * blockDim.y + threadIdx.y;
 	int c = blockIdx.x * blockDim.x + threadIdx.x;
 	int cr = d_nodes.rows;
@@ -380,24 +337,23 @@ __global__ void updateNodes(Mat2D d_nodes, float alpha) {
 	else {
 		return;
 	}
-
-	//~~ALB
 }
 
-__global__ void changeInK(Mat2D d_nodes, Mat2D d_in, int rn) {
+
+__global__ void ChangeInputsKernel(Mat2D d_nodes, Mat2D d_in, int run) {
 	int r = blockIdx.y * blockDim.y + threadIdx.y;
 	int c = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	if (r == 0 && c < d_nodes.columns) {
-		printf("Layer 0: R: %i, C: %i, in: %f \n", r, c, d_in.cells[rn * d_in.columns + c]);
-		d_nodes.cells[c] = d_in.cells[rn * d_in.columns + c];
+		printf("Layer 0: R: %i, C: %i, in: %f \n", r, c, d_in.cells[run * d_in.columns + c]);
+		d_nodes.cells[c] = d_in.cells[run * d_in.columns + c];
 	}
 	else {
 		return;
 	}
 }
 
-Mat2D cudaMAdd2D(Mat2D f_mA, Mat2D f_mB) {
+Mat2D cudaMatrixAdd2D(Mat2D f_mA, Mat2D f_mB) {
 	if (f_mA.columns != f_mB.columns || f_mA.rows != f_mB.rows) {
 		printf("ERROR: Incorrect array dimensions A + B. Sizes must be equal.\n");
 		printf("A: %i x %i, B: %i x %i\n", f_mA.rows, f_mA.columns, f_mB.rows, f_mB.columns);
@@ -407,21 +363,21 @@ Mat2D cudaMAdd2D(Mat2D f_mA, Mat2D f_mB) {
 	}
 	//Send input matricies to GPU and return d_mA so GPU memory can be deallocated later
 	printf("--------- Addition ---------\n");
-	Mat2D d_mA = cudaMSend2D(f_mA, true, "matrix A");
-	Mat2D d_mB = cudaMSend2D(f_mB, true, "matrix B");
+	Mat2D d_mA = CudaSendMat2D(f_mA, true, "matrix A");
+	Mat2D d_mB = CudaSendMat2D(f_mB, true, "matrix B");
 
 	//Create output matrix and allocate memory on GPU. Returns d_out to access result/deallocate mem
 	Mat2D out;
 	out.rows = d_mA.rows;
 	out.columns = d_mA.columns;
 	out.cells = (float*)malloc(out.rows * out.columns * sizeof(float));
-	Mat2D d_out = cudaMSend2D(out, false, "Output matrix");
+	Mat2D d_out = CudaSendMat2D(out, false, "Output matrix");
 
 	//setup CUDA architecture and run kernel
 	dim3 threadsPerBlock(16, 16); //each block will contain 16 by 16 threads
 	dim3 numBlocks((d_out.columns + threadsPerBlock.x - 1) / threadsPerBlock.x, //number of blocks on x dimension of grid
 		(d_out.rows + threadsPerBlock.y - 1) / threadsPerBlock.y); //number of blocks on y dimension of grid
-	mAddKernel2D << <numBlocks, threadsPerBlock >> > (d_mA, d_mB, d_out); //run's kernal
+	MatrixAddKernel << <numBlocks, threadsPerBlock >> > (d_mA, d_mB, d_out); //run's kernal
 	cudaError_t errCode = cudaThreadSynchronize(); //synchronize cores to ensure everthing has been run
 	printf("GPU Thread Synchronization: %s\n", cudaGetErrorString(errCode));
 
@@ -438,7 +394,7 @@ Mat2D cudaMAdd2D(Mat2D f_mA, Mat2D f_mB) {
 	printf("Pulling Output matrix from GPU: %s\n", cudaGetErrorString(errCode));
 
 	//print result
-	print2DMat(out, "\n\n--Addition Results--\nOutput ");
+	Print2DMatrix(out, "\n\n--Addition Results--\nOutput ");
 	printf("--------------------------------\n");
 
 	//deallocate GPU memory
@@ -447,10 +403,9 @@ Mat2D cudaMAdd2D(Mat2D f_mA, Mat2D f_mB) {
 	cudaFree(d_out.cells);
 
 	return out;
-	//~~ALB
 }
 
-Mat2D cudaMSub2D(Mat2D f_mA, Mat2D f_mB) {
+Mat2D cudaMatrixSubtract2D(Mat2D f_mA, Mat2D f_mB) {
 	if (f_mA.columns != f_mB.columns || f_mA.rows != f_mB.rows) {
 		printf("ERROR: Incorrect array dimensions A + B. Sizes must be equal.\n");
 		printf("A: %i x %i, B: %i x %i\n", f_mA.rows, f_mA.columns, f_mB.rows, f_mB.columns);
@@ -460,21 +415,21 @@ Mat2D cudaMSub2D(Mat2D f_mA, Mat2D f_mB) {
 	}
 	//Send input matricies to GPU and return d_mA so GPU memory can be deallocated later
 	printf("--------- Subtraction ---------\n");
-	Mat2D d_mA = cudaMSend2D(f_mA, true, "matrix A");
-	Mat2D d_mB = cudaMSend2D(f_mB, true, "matrix B");
+	Mat2D d_mA = CudaSendMat2D(f_mA, true, "matrix A");
+	Mat2D d_mB = CudaSendMat2D(f_mB, true, "matrix B");
 
 	//Create output matrix and allocate memory on GPU. Returns d_out to access result/deallocate mem
 	Mat2D out;
 	out.rows = d_mA.rows;
 	out.columns = d_mA.columns;
 	out.cells = (float*)malloc(out.rows * out.columns * sizeof(float));
-	Mat2D d_out = cudaMSend2D(out, false, "Output matrix");
+	Mat2D d_out = CudaSendMat2D(out, false, "Output matrix");
 
 	//setup CUDA architecture and run kernel
 	dim3 threadsPerBlock(16, 16); //each block will contain 16 by 16 threads
 	dim3 numBlocks((d_out.columns + threadsPerBlock.x - 1) / threadsPerBlock.x, //number of blocks on x dimension of grid
 		(d_out.rows + threadsPerBlock.y - 1) / threadsPerBlock.y); //number of blocks on y dimension of grid
-	mSubKernel2D <<<numBlocks, threadsPerBlock >>> (d_mA, d_mB, d_out); //run's kernal
+	MatrixSubtractKernel <<<numBlocks, threadsPerBlock >>> (d_mA, d_mB, d_out); //run's kernal
 	cudaError_t errCode = cudaThreadSynchronize(); //synchronize cores to ensure everthing has been run
 	printf("GPU Thread Synchronization: %s\n", cudaGetErrorString(errCode));
 
@@ -491,7 +446,7 @@ Mat2D cudaMSub2D(Mat2D f_mA, Mat2D f_mB) {
 	printf("Pulling Output matrix from GPU: %s\n", cudaGetErrorString(errCode));
 
 	//print result
-	print2DMat(out, "\n\n--Subtraction Results--\nOutput ");
+	Print2DMatrix(out, "\n\n--Subtraction Results--\nOutput ");
 	printf("--------------------------------\n");
 
 	//deallocate GPU memory
@@ -500,23 +455,22 @@ Mat2D cudaMSub2D(Mat2D f_mA, Mat2D f_mB) {
 	cudaFree(d_out.cells);
 
 	return out;
-	//~~ALB
 }
 
-Mat2D cudaMTrans2D(Mat2D f_m) {
+Mat2D cudaMatrixTranspose2D(Mat2D f_m) {
 	printf("--------- Transposition ---------\n");
-	Mat2D d_m = cudaMSend2D(f_m, true, "Original");
+	Mat2D d_m = CudaSendMat2D(f_m, true, "Original");
 
 	Mat2D out;
 	//out.id = getID(mIds, 1);
 	out.rows = f_m.columns;
 	out.columns = f_m.rows;
 	out.cells = (float*)malloc(out.rows*out.columns * sizeof(float));
-	Mat2D d_o = cudaMSend2D(out, true, "output");
+	Mat2D d_o = CudaSendMat2D(out, true, "output");
 
 	dim3 tPBlock(16, 16);
 	dim3 nBlocks((out.columns + tPBlock.x - 1) / tPBlock.x, (out.rows + tPBlock.y - 1) / tPBlock.y);
-	mTransKernel2D << <nBlocks, tPBlock >> > (d_m, d_o);
+	MatrixTransposeKernel << <nBlocks, tPBlock >> > (d_m, d_o);
 	cudaError_t errCode = cudaThreadSynchronize(); //synchronize cores to ensure everthing has been run
 	printf("GPU Thread Synchronization: %s\n", cudaGetErrorString(errCode));
 
@@ -533,19 +487,16 @@ Mat2D cudaMTrans2D(Mat2D f_m) {
 	printf("Pulling Output matrix from GPU: %s\n", cudaGetErrorString(errCode));
 
 	//print result
-	print2DMat(out, "\n\n--Transposition Results--\nOutput ");
+	Print2DMatrix(out, "\n\n--Transposition Results--\nOutput ");
 	printf("--------------------------------\n");
 
 	cudaFree(d_m.cells);
 	cudaFree(d_o.cells);
 
 	return out;
-
-
-	//~~ALB
 }
 
-Mat2D cudaMMult2D(Mat2D f_mA, Mat2D f_mB) { 
+Mat2D cudaMatrixMult2D(Mat2D f_mA, Mat2D f_mB) { 
 	/*2D Matrix multiplication algorithm
 	  needs: mMultKernel2D<<<nBlocks, tPb>>>(Mat2D d_mA, Mat2D d_mB, Mat2D d_out),
 	  cudaMSend2D(Mat2D f_mX, Bool TF, const char* ID), nodeSet.h
@@ -565,8 +516,8 @@ Mat2D cudaMMult2D(Mat2D f_mA, Mat2D f_mB) {
 
 	//Send input matricies to GPU and return d_mA so GPU memory can be deallocated later
 	printf("---------Multiplication---------\n");
-	Mat2D d_mA = cudaMSend2D(f_mA, true, "matrix A");
-	Mat2D d_mB = cudaMSend2D(f_mB, true, "matrix B");
+	Mat2D d_mA = CudaSendMat2D(f_mA, true, "matrix A");
+	Mat2D d_mB = CudaSendMat2D(f_mB, true, "matrix B");
 
 	//Create output matrix and allocate memory on GPU. Returns d_out to access result/deallocate mem
 	Mat2D out;
@@ -574,13 +525,13 @@ Mat2D cudaMMult2D(Mat2D f_mA, Mat2D f_mB) {
 	out.rows = d_mA.rows;
 	out.columns = d_mB.columns;
 	out.cells = (float*)malloc(out.rows * out.columns * sizeof(float));
-	Mat2D d_out = cudaMSend2D(out, false, "Output matrix");
+	Mat2D d_out = CudaSendMat2D(out, false, "Output matrix");
 
 	//setup CUDA architecture and run kernel
 	dim3 threadsPerBlock(16, 16); //each block will contain 16 by 16 threads
 	dim3 numBlocks((d_out.columns + threadsPerBlock.x - 1) / threadsPerBlock.x, //number of blocks on x dimension of grid
 		(d_out.rows + threadsPerBlock.y) / threadsPerBlock.y); //number of blocks on y dimension of grid
-	mMultKernel2D << <numBlocks, threadsPerBlock >> > (d_mA, d_mB, d_out); //run's kernal
+	MatrixMultiplyKernel << <numBlocks, threadsPerBlock >> > (d_mA, d_mB, d_out); //run's kernal
 	cudaError_t errCode = cudaThreadSynchronize(); //synchronize cores to ensure everthing has been run
 	printf("GPU Thread Synchronization: %s\n", cudaGetErrorString(errCode));
 
@@ -597,7 +548,7 @@ Mat2D cudaMMult2D(Mat2D f_mA, Mat2D f_mB) {
 	printf("Pulling Output matrix from GPU: %s\n", cudaGetErrorString(errCode));
 
 	//print result
-	print2DMat(out, "\n\n--Multiplication Results--\nOutput ");
+	Print2DMatrix(out, "\n\n--Multiplication Results--\nOutput ");
 	printf("--------------------------------\n");
 
 	//deallocate GPU memory
@@ -606,10 +557,9 @@ Mat2D cudaMMult2D(Mat2D f_mA, Mat2D f_mB) {
 	cudaFree(d_out.cells);
 
 	return out;
-	//~~ALB
 }
 
-Mat2D layerSetup(laySet setup, int indx, bool onesFirst = true) { 
+Mat2D layerSetup(LaySet setup, int indx, bool onesFirst = true) { 
 	/*Setup of the node layers:
 	  Each array has the output node in row zero, and the weights for each input in the rows below.
 	  So, # of rows = # of nodes from previous layer + 2 (the output node row and a bias row on row 1)
@@ -648,10 +598,9 @@ Mat2D layerSetup(laySet setup, int indx, bool onesFirst = true) {
 	}
 
 	return out;
-	//~~ALB
 }
 
-Mat2D* hiddenSetup(laySet setup) {
+Mat2D* hiddenSetup(LaySet setup) {
 	/*Setup of the 'hidden' layers and input layer
 	  The goal is to setup a linked list. Its the dream..
 	  From here on we're passing pointers rather than the structure
@@ -669,14 +618,14 @@ Mat2D* hiddenSetup(laySet setup) {
 	first = (Mat2D*)malloc(sizeof(Mat2D));//allocate memory
 	*first = layerSetup(setup, i);//setup first layer, we're going to hold on to the first layer
 	printf("layer %i\n", i);
-	print2DMat(*first);
+	Print2DMatrix(*first);
 	printf("layer %i-- rows:%i, cols:%i\n\n", i, first->rows, first->columns);
 	i++;
 
 	prev = (Mat2D*)malloc(sizeof(Mat2D));//allocate memory
 	*prev = layerSetup(setup, i); //setup second layer
 	printf("layer %i\n", i);
-	print2DMat(*prev);
+	Print2DMatrix(*prev);
 	printf("layer %i-- rows:%i, cols:%i\n\n", i, prev->rows, prev->columns);
 	i++;
 
@@ -687,7 +636,7 @@ Mat2D* hiddenSetup(laySet setup) {
 		next = (Mat2D*)malloc(sizeof(Mat2D)); //allocate memory
 		*next = layerSetup(setup, i); //setup ith layer
 		printf("layer %i\n", i);
-		print2DMat(*next);
+		Print2DMatrix(*next);
 		printf("layer %i-- rows:%i, cols:%i\n\n", i, next->rows, next->columns);
 		(*prev).next = (struct Mat2D*)next; //link i-1'th to ith
 		prev = next;
@@ -697,11 +646,9 @@ Mat2D* hiddenSetup(laySet setup) {
 	first->end = next;
 	//return the first layer as it will have the links  to all
 	return first;
-
-	//~~ALB
 }
 
-Mat2D* lmatSend2D(Mat2D* nodes) {
+Mat2D* layerMatrixSend2D(Mat2D* nodes) {
 	/*Code for sending the linked matricies to the GPU.
 	  We cant use the CudaMsend2D since we want to use pointers.
 	  This needs to eventually be moved to the header I think, but for now it stays.
@@ -726,7 +673,6 @@ Mat2D* lmatSend2D(Mat2D* nodes) {
 	errCode = cudaMemcpy(d_nodes->dX, nodes->dX, d_nodes->rows * d_nodes->columns * sizeof(float), cudaMemcpyHostToDevice);//copy cell values to GPU
 	printf("Memcpy dX: %s\n", cudaGetErrorString(errCode));
 	return d_nodes;
-	//~~ALB
 }
 
 Mat2D* sendActual(Mat2D* actual) {
@@ -742,7 +688,6 @@ Mat2D* sendActual(Mat2D* actual) {
 	errCode = cudaMemcpy(d_act->cells, actual->cells, actual->rows * actual->columns * sizeof(float), cudaMemcpyHostToDevice);
 	printf("Memcpy Actual Nodes: %s\n", cudaGetErrorString(errCode));
 	return d_act;
-	//~~ALB
 }
 
 Mat2D* nodeRetrieve(Mat2D* d_nodes, Mat2D* nodes, bool free = true) {
@@ -791,10 +736,9 @@ Mat2D* nodeRetrieve(Mat2D* d_nodes, Mat2D* nodes, bool free = true) {
 		nodes = nodes->next;
 	}
 	return first;
-	//~~ALB
 }
 
-Mat2D* pNodesSetup(Mat2D* nodes) {
+Mat2D* initNodes(Mat2D* nodes) {
 	/*Code for processing the nodes.
 	  This should eventually be improved with aSync.
 	  The idea here is to be able to try to keep the transfers to the GPU to a minimum
@@ -804,8 +748,8 @@ Mat2D* pNodesSetup(Mat2D* nodes) {
 	Mat2D* first = nodes;
 	Mat2D* next = first->next;
 
-	Mat2D* d_first = lmatSend2D(first); //send first, and get back pointer to device-first
-	Mat2D* d_next = lmatSend2D(next); //send next, and get back pointer to device-next
+	Mat2D* d_first = layerMatrixSend2D(first); //send first, and get back pointer to device-first
+	Mat2D* d_next = layerMatrixSend2D(next); //send next, and get back pointer to device-next
 	d_first->next = d_next; // yep, we're creating a linked list to retrieve everything later
 
 	dim3 tPb(BLKSZ, BLKSZ); //standard tpb code
@@ -813,7 +757,7 @@ Mat2D* pNodesSetup(Mat2D* nodes) {
 	//dim3 nb((d_next->rows + tPb.y) / tPb.y, (d_next->columns + tPb.x) / tPb.x);
 
 	printf("Layer 1\n"); //I didn't print a layer 0 because nothing is going on there
-	logistic2D <<<nb, tPb >>> (*d_next, *d_first); // kernal execution
+	LogisticNodeFunctionKernel <<<nb, tPb >>> (*d_next, *d_first); // kernal execution
 	cudaError_t errCode = cudaThreadSynchronize(); //sync threads
 	printf("GPU Thread Synchronization: %s\n", cudaGetErrorString(errCode));
 
@@ -823,14 +767,14 @@ Mat2D* pNodesSetup(Mat2D* nodes) {
 
 	int i = 2;//for tracking in the print code
 	while (next != NULL) { //go until end of host linked list
-		d_next = lmatSend2D(next);//send next layer
+		d_next = layerMatrixSend2D(next);//send next layer
 		d_prev->next = d_next;//building device linked list
 
 		//basically repeated from above
 		dim3 nb(ceil((double)d_next->columns / tPb.x), ceil((double)d_next->rows / tPb.y));
 		//dim3 nb((d_next->rows + tPb.y) / tPb.y, (d_next->columns + tPb.x) / tPb.x);
 		printf("Layer %i\n", i);
-		logistic2D <<<nb, tPb >>> (*d_next, *d_prev);
+		LogisticNodeFunctionKernel <<<nb, tPb >>> (*d_next, *d_prev);
 		errCode = cudaThreadSynchronize();
 		printf("GPU Thread Synchronization: %s\n", cudaGetErrorString(errCode));
 
@@ -842,10 +786,9 @@ Mat2D* pNodesSetup(Mat2D* nodes) {
 	d_prev->next = NULL;
 	d_first->end = d_prev;
 	return d_first; //return device linked list so we can get the results later
-					//~~ALB
 }
 
-Mat2D* uNodes(Mat2D* d_nodes, float alpha) {
+Mat2D* updateNodes(Mat2D* d_nodes, float alpha) {
 	/*Code to update the node weights during the learning cycle
 	*/
 
@@ -859,7 +802,7 @@ Mat2D* uNodes(Mat2D* d_nodes, float alpha) {
 		//dim3 nb((t->rows + tPb.y) / tPb.y, (t->columns + tPb.x) / tPb.x);
 		
 		printf("\nLayer %i Update \n", i);
-		updateNodes<<<nb, tPb>>>(*t, alpha);
+		UpdateNodesKernel<<<nb, tPb>>>(*t, alpha);
 		
 		cudaError_t errCode = cudaDeviceSynchronize();
 		printf("\nNode Update: %s\n", cudaGetErrorString(errCode));
@@ -877,10 +820,9 @@ Mat2D* uNodes(Mat2D* d_nodes, float alpha) {
 	printf("\nNode Update: %s\n", cudaGetErrorString(errCode));
 	printf("==================NODE UPDATE COMPLETE========================= \n");
 	return d_nodes;
-	//~~ALB
 }
 
-Mat2D* changeIn(Mat2D* d_nodes, Mat2D* inputs, int r) {
+Mat2D* changeInputs(Mat2D* d_nodes, Mat2D* inputs, int r) {
 	//function to change the input layer for each cycle through
 	printf("-Change Inputs-\n");
 	Mat2D* d_in = (Mat2D*)malloc(sizeof(Mat2D));
@@ -898,17 +840,18 @@ Mat2D* changeIn(Mat2D* d_nodes, Mat2D* inputs, int r) {
 	errCode = cudaMemcpy(d_nodes->cells, d_in->cells, sizeof(inputs), cudaMemcpyHostToDevice);
 	printf("Input change memcpy: %s\n\n", cudaGetErrorString(errCode));
 	return d_nodes;
-	//~~ALB
 }
 
-Mat2D* pNodes(Mat2D* d_n, bool learn = false, Mat2D* actual = NULL, int run = 0, Mat2D* last = NULL) {
-	/* Main processing function... 
 
-	Travels through the linked list, calling the main logistic forward function
-	Reaches the end and pivots, comparing the output with the actual value in the training set
-	Travels backwards through the recursion return path and calculates the change to the node weights
-	
-	*/
+/* processNodes-
+Main processing function...
+
+Travels through the linked list, calling the main logistic forward function
+Reaches the end and pivots, comparing the output with the actual value in the training set
+Travels backwards through the recursion return path and calculates the change to the node weights
+
+*/
+Mat2D* processNodes(Mat2D* d_n, bool learn = false, Mat2D* actual = NULL, int run = 0, Mat2D* last = NULL) {
 
 	//Travels through the linked list, calling the main logistic forward function
 	if (d_n->next != NULL) {
@@ -916,10 +859,10 @@ Mat2D* pNodes(Mat2D* d_n, bool learn = false, Mat2D* actual = NULL, int run = 0,
 		dim3 tPb(BLKSZ, BLKSZ);
 		dim3 dimGrid(ceil((double)d_n->columns / tPb.x), ceil((double)d_n->rows / tPb.y));
 		//dim3 nb((d_n->rows + tPb.y) / tPb.y, (d_n->columns + tPb.x) / tPb.x);
-		logistic2D <<< dimGrid, tPb >>> (*d_n->next, *d_n);
+		LogisticNodeFunctionKernel <<< dimGrid, tPb >>> (*d_n->next, *d_n);
 		cudaError_t errCode = cudaDeviceSynchronize();
 		//printf("Calc Forward STATUS: %s\n\n", cudaGetErrorString(errCode));
-		d_n = pNodes(d_n->next, learn, actual, run, d_n);
+		d_n = processNodes(d_n->next, learn, actual, run, d_n);
 	}
 
 	//Reaches the end and pivots, comparing the output with the actual value in the training set
@@ -928,7 +871,7 @@ Mat2D* pNodes(Mat2D* d_n, bool learn = false, Mat2D* actual = NULL, int run = 0,
 		dim3 tPb(BLKSZ, BLKSZ);
 		dim3 dimGrid(ceil((double)d_n->columns / tPb.x), ceil((double)d_n->rows / tPb.y));
 		//dim3 nb((d_n->rows + tPb.y) / tPb.y, (d_n->columns + tPb.x) / tPb.x);
-		outPivotLog <<< dimGrid, tPb >>> (*last, *d_n, *actual, run);
+		LogisticOutputLayerPivotKernel <<< dimGrid, tPb >>> (*last, *d_n, *actual, run);
 		cudaError_t errCode = cudaDeviceSynchronize();
 		//printf("Calc Pivot STATUS: %s\n\n", cudaGetErrorString(errCode));
 	}
@@ -941,7 +884,7 @@ Mat2D* pNodes(Mat2D* d_n, bool learn = false, Mat2D* actual = NULL, int run = 0,
 		dim3 tPb(BLKSZ, BLKSZ);
 		dim3 dimGrid(ceil((double)d_n->columns / tPb.x), ceil((double)d_n->rows / tPb.y));
 		//dim3 nb((d_n->rows + tPb.y) / tPb.y, (d_n->columns + tPb.x) / tPb.x);
-		nodeBackwardLog <<< dimGrid, tPb >>> (*last, *d_n, *d_n->next);
+		LogisticBackpropagationKernel <<< dimGrid, tPb >>> (*last, *d_n, *d_n->next);
 		cudaError_t errCode = cudaDeviceSynchronize();
 		//printf("\n Calc Backwards STATUS: %s\n\n", cudaGetErrorString(errCode));
 	}
@@ -952,41 +895,22 @@ Mat2D* pNodes(Mat2D* d_n, bool learn = false, Mat2D* actual = NULL, int run = 0,
 	else {
 		return d_n;
 	}
-	//~~ALB
 }
 
 float pullBatchErr(Mat2D* d_last, float bSize) {
-	//float* out = (float*)malloc(d_last->columns * sizeof(float));
+	
 	Mat2D last;
 	last.dX = (float*)malloc(d_last->columns * d_last->rows * sizeof(float));
 	cudaError_t errCode = cudaMemcpy(last.dX, d_last->dX, d_last->columns * d_last->rows * sizeof(float), cudaMemcpyDeviceToHost);
 	printf("Pulling output from last node: %s\n", cudaGetErrorString(errCode));
-
 	
-	/*for (int i = 0; i < d_last->columns; ++i) {
-		out[i] = last.cells[i];
-	}*/
 	float out = last.dX[d_last->columns]/ bSize;
 	free(last.dX);
 	return out;
 }
 
 int main(int argc, char* argv) {
-	//These testers for the matrix math will eventually be gone
-	//float a[] = {
-	//	2, 4, 6, 7,
-	//	1, 3, 4, 6, 9
-	//};
-	//int rA = 3;
-	//int cA = 3;
-	//float b[] = {
-	//	0, 4,
-	//    2, 3, 
-	//	2, 4,
-	//	4, 4, 3
-	//};
-	//int rB = 3;
-	//int cB = 3;
+
 
 	printf("============= Initializing ===============\n");
 	cudaDeviceProp Dev;
@@ -1007,28 +931,21 @@ int main(int argc, char* argv) {
 	Config setup("");
 	printf("in: %s, act: %s, out: %s\n", setup.in.c_str(), setup.act.c_str(), setup.out.c_str());
 	Timer Time(setup.timer);
-
+	
 	//Below is a layer setup variable, this takes an array where each value is the number of nodes in that layer
-	laySet lay;
-	// int x[] = { 1, 24,  1 };
-	/*lay.layers = sizeof(x) / sizeof(int);
-	lay.nPl = x;*/
+	LaySet lay;
 	lay.layers = setup.layers;
 	lay.nPl = setup.nodesPerlayer;
 	
 
 	//below is the training set inputs as a vector (turned into a Mat2D)... this is currently just hard-coded.
 	//each row is the next input for the traning set
-	Mat2D* inputs = csvToMat2D(setup.in, lay.nPl[0]);
+	Mat2D* inputs = CsvToMat2D(setup.in, lay.nPl[0]);
 
 	//below is the training actual values set as a vector... this is currently just hard-coded.
 	//each row is the next actual value for the traning set
-	Mat2D* actual = csvToMat2D(setup.act, lay.nPl[lay.layers - 1]);
-	//actual->columns = lay.nPl[lay.layers -1];
-	//float act[] = { 0.5, 2.5, 1.5, 1, 1.5, 2, 2.5, 0.5, 0.5, 2.5, 1.5, 1, 1.5, 2, 2.5, 0.5, 0.5, 2.5, 1.5, 1, 1.5, 2, 2.5, 0.5 };
-	//actual->rows = sizeof(act) / sizeof(float);
-	//vecToMat2DP(act, actual);
-	
+	Mat2D* actual = CsvToMat2D(setup.act, lay.nPl[lay.layers - 1]);
+
 	int bSize = setup.batchSize; //batch size.... the number of runs before updating the variables
 	float alpha = setup.alpha;
 	string oString = setup.out; //output file name
@@ -1044,14 +961,11 @@ int main(int argc, char* argv) {
 	errCode = cudaMemcpy(d_in->cells, inputs->cells, inputs->columns * inputs->rows * sizeof(float), cudaMemcpyHostToDevice);
 	printf("Send inputs: %s\n\n", cudaGetErrorString(errCode));
 	Time.lap("Send Inputs");
-	/*inputs->columns = x[0];
-	float inp[] = { 1, 5, 3, 2, 3, 4, 5, 1, 1, 5, 3, 2, 3, 4, 5, 1, 1, 5, 3, 2, 3, 4, 5, 1 };
-	inputs->cells = (float*)malloc(sizeof(inp));
-	inputs->cells = inp;*/
+
 
 
 	Mat2D* first = hiddenSetup(lay); //setup the hidden layers based on the layset variable lay
-	Mat2D* d_first = pNodesSetup(first); //initial run through with all inputs set to one
+	Mat2D* d_first = initNodes(first); //initial run through with all inputs set to one
 	Mat2D* d_act = sendActual(actual); //send the training set outputs to the GPU
 
 	ofstream outFile;
@@ -1072,15 +986,16 @@ int main(int argc, char* argv) {
 		int rn = 0;
 		for (; rn < inputs->columns * inputs->rows;) {
 			int b = bSize;
-			while (b > 0) { //this loops until the batch size is met and then moves to the update step
+			while (b > 0) { 
+        //This loops until the batch size is met and then moves to the update step.
 				printf("\n--Run: %i\n", rn + b*cyc);
 				//d_first = changeIn(d_first, inputs, rn); //change the inputs to the corresponding training set
 				dim3 tPb(BLKSZ, BLKSZ);
 				dim3 nb(ceil((double)d_first->rows/ tPb.y), ceil((double)d_first->columns/tPb.x));
-				changeInK <<< nb, tPb >>> (*d_first, *d_in, rn);
+				ChangeInputsKernel <<< nb, tPb >>> (*d_first, *d_in, rn);
 				errCode = cudaDeviceSynchronize();
 				printf("Calc Update Node: %s\n\n", cudaGetErrorString(errCode));
-				d_first = pNodes(d_first, true, d_act, rn); //process the nodes
+				d_first = processNodes(d_first, true, d_act, rn); //process the nodes
 				b = b - 1; //next batch index
 				rn = rn + 1; //next run index
 			}
@@ -1096,7 +1011,7 @@ int main(int argc, char* argv) {
 				outFile << ", " << bErr;
 			}
 			//
-			d_first = uNodes(d_first, alpha); //update the node weights
+			d_first = updateNodes(d_first, alpha); //update the node weights
 		}
 
 	}
@@ -1111,7 +1026,7 @@ int main(int argc, char* argv) {
 	int i = 0;
 	while (first != NULL) {
 		printf("Layer %i\n", i);
-		print2DMat(*first);
+		Print2DMatrix(*first);
 		temp = (Mat2D*)first;
 		first = first->next;
 		free(temp);
@@ -1157,8 +1072,4 @@ cuda-memcheck ./matops |more
 ========================================================================
 Below is a good way of deciphering error messages:
 www.google.com
-
-
-
-~~ALB
 */
