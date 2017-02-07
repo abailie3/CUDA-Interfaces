@@ -1,0 +1,7 @@
+input file name:,inputs.csv,,
+actual file name:,actual.csv,,
+output file name:,out.csv,,
+batch size:,20,,
+alpha:,0.8,,
+layer setup:,1,24,1
+timer file name:,,,

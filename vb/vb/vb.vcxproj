@@ -26,6 +26,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\nodeSet.h" />
+    <ClInclude Include="..\..\Timer.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}</ProjectGuid>

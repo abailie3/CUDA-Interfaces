@@ -32,11 +32,15 @@ v0.2: 1/29/2017
 #define __NODESET_H_INCLUDED__
 
 //============== Includes ================
-#include <stdio.h>
-#include <string.h>
+#include "Timer.h"
+#include <time.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <math.h>
+#include <iostream>
+#include <vector>
+#include <thrust/device_vector.h>
+
 //========== Custom Typedefs =============
 
 typedef struct Mat2D { //row then column
@@ -86,6 +90,125 @@ typedef struct {
 	int layers; //number of layers
 	int bigX;
 }laySet;// new
+
+//=========== Classses==============
+
+
+class Config {
+	std::string cfg;
+	//bool loaded;
+public:
+	//Config ();
+	Config (std::string);
+	~Config();
+	std::string in, act, out, timer;
+	//void reLoadConfig(std::string);
+	int* nodesPerlayer;
+	int layers, batchSize;
+	float alpha;
+
+};
+//define constructor
+Config::Config (std::string c = "") {
+	if (c != "") {
+		cfg = c;
+	}
+	else {
+		cfg = "setup.csv";
+	}
+	
+	//Creating 2d vector of the setup file for easy access
+	//std::vector< std::vector<std::string> > lines;
+	std::vector< std::vector<std::string> > lines;
+	std::vector< std::string > w;
+	
+
+
+	std::ifstream fIn(cfg);
+
+	for (std::string ln; getline(fIn, ln);) {
+		std::stringstream s(ln);
+		for (std::string wd; getline(s, wd, ',');) {
+			w.push_back(wd);
+		}
+		lines.push_back(w);
+		s.clear();//free mem
+	}
+	fIn.close();
+	//setting the different variables from the parsed config file
+	in = lines[0][1];
+	act = lines[1][1];
+	out = lines[2][1];
+	batchSize = stoi(lines[3][1]);
+	alpha = stof(lines[4][1]);
+	layers = lines[5].size() - 1;
+	nodesPerlayer = (int*)malloc(layers * sizeof(int));
+	for (int i = 0; i < layers; ++i) {
+		nodesPerlayer[i] = stoi(lines[5][i + 1]);
+	};
+
+	if (lines[6].size() > 1){
+		timer = lines[6][1];
+	}
+	else {
+		timer = "";
+	}
+
+	//free some memory
+	
+	lines.clear();
+
+}
+
+//define destructor
+Config::~Config() {
+	//delete the allocated memory for nodesPerLayer
+	free(nodesPerlayer);
+}
+
+
+//=========== this code below may be removed/or implemented
+//Config::Config (std::string c) {
+//	cfg = c;
+//	loaded = false;
+//}
+
+//void Config::reLoadConfig(std::string c = "") {
+//	if (c != "") {
+//		cfg = c;
+//	}
+//	std::vector< std::vector<std::string> > lines;
+//	std::vector<std::string> w;
+//	std::ifstream fIn(cfg);
+//	
+//	for (std::string ln; getline(fIn, ln);) {
+//		std::stringstream s(ln);
+//		for (std::string wd; getline(s, wd, ',');) {
+//			w.push_back(wd);
+//		}
+//		lines.push_back(w);
+//		w.clear();
+//		s.clear();
+//	}
+//	fIn.close();
+//	in = lines.at(0).at(1);
+//	act = lines.at(1).at(1);
+//	out = lines.at(2).at(1);
+//	batchSize = stoi(lines.at(3).at(1));
+//	alpha = stof(lines.at(4).at(1));
+//	layers = lines.at(5).size() - 1;
+//	nodesPerlayer = (int*)malloc(layers * sizeof(int));
+//	for (int i = 0; i < layers; ++i) {
+//		nodesPerlayer[i] = stoi(lines.at(5).at(i + 1));
+//	};
+//	lines.clear;
+//}
+
+//======
+
+//using namespace std;
+
+
 		
 //=========== Node Utilities =============
 
@@ -209,7 +332,65 @@ Mat2D cudaMSend2D(Mat2D iM, bool copy, const char* iD = "matrix") {
 	//~~ALB
 }
 
+std::istream& csv(std::istream& inp) {
+	if ((inp >> std::ws).peek() != std::char_traits<char>::to_int_type(',')) {
+		inp.setstate(std::ios_base::failbit);
+	}
+	return inp.ignore();
+}
 
+Mat2D* csvToMat2D(std::string inStr, int cols = 1) {
+	std::vector<float> values;
+	std::ifstream fin(inStr);
+	for (std::string li; std::getline(fin, li);) {
+		std::istringstream in;
+		in.clear();
+		in.str(li);
+		for (float val; in >> val; in >> csv) {
+			values.push_back(val);
+		}
+	}
 
+	Mat2D* out = (Mat2D*)malloc(sizeof(Mat2D));
+	out->cells = (float*)malloc(values.size() * sizeof(float));
+	out->columns = cols;
+	out->rows = values.size() / cols;
+	for (int i = 0; i < (int)values.size(); ++i) {
+		float &t = values.at(i);
+		out->cells[i] = t;
+	}
+	return out;
+};
+//string csvGetString(string fPath, int lNum, int cNum, int sz = 1) {
+//	std::vector<vector<string>> line;
+//	std::vector<string> word;
+//	string val;
+//	Config cfg;
+//	bool EX = false;
+//	std::ifstream fIn(fPath);
+//	int l = 0;
+//	for (std::string line; std::getline(fIn, line) && !EX;) {
+//		if (l == lNum) {
+//			int c = 0;
+//			for (std::string word; std::getline(fIn, line, ',');) {
+//				if (c == cNum) {
+//
+//				}
+//			}
+//		}
+//	}
+//}
+
+void outToCsv(float* out, Mat2D* act, std::ofstream* outFile, int rn) {
+	float errSq;
+	int c = act->columns;
+	*outFile << std::endl;
+	for (int i = 0; i < c; ++i) {
+		errSq = (out[i] - act->cells[i]);
+		errSq = errSq * errSq;
+		*outFile << out[i] << ", " << act->cells[rn * c + i] << ", " << errSq;
+	}
+	return;
+}
 
 #endif
