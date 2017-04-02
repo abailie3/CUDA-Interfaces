@@ -43,6 +43,15 @@ v0.2: 1/29/2017
 	* added pNodes process function
 	* tweaked most of the previously added neural network architecture
 	* changed main function to run the neural network
-* current technology will successfuly perform batch gradient descent with 0 errors on Cuda-memcheck   
+* current technology will successfuly perform batch gradient descent with 0 errors on Cuda-memcheck
+
+v1.0: 4/1/2017
+* Changed the code in this module to support the new Mat2D class
+
+v1.1: 4/XX/2017: Developing Python Interface
+* Restructured code such that the neural net can be run via a function call rather than via the main function.
+* Restructured main function to only have setup actions if run from C++
+* Removed some unused functions (mainly the old matrix functions originally intended for my own practice).
+* Addressed some memory leaks and access violations.
 
 ===========================================
