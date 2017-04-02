@@ -1,5 +1,5 @@
-input file name:,inputs.csv,,
-actual file name:,actual.csv,,
+input file name:,inputs_long.csv,,
+actual file name:,actual_long.csv,,
 output file name:,out.csv,,
 batch size:,20,,
 alpha:,0.8,,

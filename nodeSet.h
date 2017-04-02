@@ -1,6 +1,6 @@
 /*
-=== CUDA matrix typedefs/functions v0.2 ===
-			By: Austin Bailie
+====== CUDA matrix typedefs/functions v1.0 ======
+	         		By: Austin Bailie
 
 Matrix typedefs with support for higher
 dimension matricies.
@@ -8,13 +8,15 @@ dimension matricies.
 Adapted from:
 	-nVidia's CUDA Programming guide
 	-Other credits appear in their respective spots
-===========================================
+=================================================
 */
 /*
-============ Change Log ===================
-v0: 1/15/2017		-original
+================= Change Log ====================
+v0: 1/15/2017
+          -original
 
-v0.1: 1/21/2017		-added include protection
+v0.1: 1/21/2017		
+          -added include protection
 					-added math.h to support matOps.cu
 					-changed Mat2D to support linked lists
 					-added laySet to support neural net functionality
@@ -24,14 +26,19 @@ v0.2: 1/29/2017
 					-added dTh and dX fields to Mat2D
 					-minor additions/changes to common functions
 
-===========================================
+v1.0: 4/1/2017
+          -Changed Mat2D structure to d_Mat2D
+          -Implemented Mat2D class
+          -Changed malloc to new where appropriate
+          -Removed higher dimension matrix structure
+=================================================
 */
 
 //========= Watch your head!! =============
 #ifndef __NODESET_H_INCLUDED__
 #define __NODESET_H_INCLUDED__
-
 //============== Includes ================
+#include "cuda.h"
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <iostream>
@@ -40,51 +47,15 @@ v0.2: 1/29/2017
 #include "Timer.h"
 #include <math.h>
 #include <vector>
-
-
 //========== Custom Typedefs =============
-
-typedef struct Mat2D { //row then column
+typedef struct d_Mat2D { //row then column
 	int rows;
-	int rrows;
 	int columns;
 	int run;
-	float* dTh; //new
-	float* dX; //new
-	float* cells;
-	struct Mat2D *next;
-	struct Mat2D *end;
-} Mat2D;//
-
-
-/*yeah I made some changes to the higher dimension
-  structs... but I haven't needed them yet, so its not worth
-  mentioning*/
-//typedef struct { //jagged 3d array cells(0) = rows in layer 0, cells(1) = columns  in layer 0, cells(cells(0)*cells(1)+2) = rows in layer 1 and so forth
-//	int layers;
-//	int count;
-//	float* d_nodes;
-//	float* cells;
-//} jagMat3D;
-
-typedef struct { //row then column then level then time
-	int id;
-	int rows;
-	int columns;
-	int levels;
-	int time;
-	float* cells;
-} Mat4D;
-
-typedef struct { //row then column then level then time then fractalPlane
-	int id;
-	int rows;
-	int columns;
-	int levels;
-	int time;
-	int fractalPlane;
-	float* cells;
-} Mat5D;
+	float* dTh = nullptr; //new
+	float* dX = nullptr; //new
+	float* cells = nullptr;
+} d_Mat2D;
 
 typedef struct {
 	int* nPl; //an array containing the number of nodes per layer
@@ -93,17 +64,219 @@ typedef struct {
 }LaySet;// new
 
 //=========== Classses==============
+class Mat2D {
+  std::string label;
+public:
+  Mat2D();
+  Mat2D(int in_rows, int in_cols);
+  enum sub_matrix { Cells = 0, Theta = 1, X = 2 };
+  void addWeightArray();
+  void resize(int new_rows, int new_cols, sub_matrix matrix, bool hard);
+  float* gpuMalloc(sub_matrix matrix);
+  void gpuSetup(sub_matrix matrix);
+  void gpuSetup(float* send, sub_matrix matrix);
+  void gpuSetup(float* to_cells, float* to_dTh, float* to_dX);
+  void gpuSetup();
+  void gpuSend(float* send, float* &mat);
+  void gpuRetrieve(sub_matrix matrix);
+  void gpuRetrieve(bool free);
+  void gpuRetrieve();
+  void gpuRetrieve(Mat2D* from, sub_matrix matrix);
+  void gpuRetrieve(Mat2D* from);
+  void gpuFree();
+  int rows = 0;
+  int columns = 0;
+  int run = 0;
+  float* dTh = nullptr; //new
+  float* dX = nullptr; //new
+  float* cells = nullptr;
+  Mat2D* next = nullptr;
+  Mat2D* end =  nullptr;
+  d_Mat2D* dev = nullptr;
+  unsigned int matSize = 0;
+private:
+  void setSize(int in_rows, int in_cols);
+  float* returnArray(sub_matrix matrix);
+  void assignDeviceArray(float* &mat, sub_matrix matrix);
+  void initHostArray(float* &mat);
+  void initDeviceStruct();
+  void hardResize(int new_rows, int new_cols, float* &change);
+  void softResize(int new_rows, int new_cols, float* &change);
+};
+Mat2D::Mat2D() {
 
-
+}
+Mat2D::Mat2D(int in_rows, int in_cols) {
+  setSize(in_rows, in_cols);
+  cells = new float[matSize];
+}
+void Mat2D::resize(int new_rows, int new_cols, sub_matrix matrix, 
+                                               bool hard = false) {
+  float* change = returnArray(matrix);
+  if (*change == NULL) hard = true;
+  
+  if (hard) {
+    hardResize(new_rows, new_cols, change);
+    return;
+  }
+  softResize(new_rows, new_cols, change);
+  return; 
+}
+float* Mat2D::returnArray(sub_matrix matrix) {
+  if (matrix == Cells) {
+    initHostArray(cells);
+    return cells;
+  } else if (matrix == Theta) {
+    initHostArray(dTh);
+    return dTh;
+  } else {
+    initHostArray(dX);
+    return dX;
+  }
+}
+void Mat2D::assignDeviceArray(float* &mat, sub_matrix matrix) {
+  if (dev == nullptr) {
+    printf("return dev array in first if\n");
+    initDeviceStruct();
+  }
+  if (matrix == Cells) {
+    initHostArray(dev->cells);
+    mat = dev->cells;
+  } else if (matrix == Theta) {
+    initHostArray(dev->dTh);
+    mat = dev->dTh;
+  } else {
+    initHostArray(dev->dX);
+    mat = dev->dX;
+  }
+}
+void Mat2D::initDeviceStruct() {
+  dev = (d_Mat2D*)malloc(sizeof(d_Mat2D));
+  dev->rows = rows;
+  dev->columns = columns;
+}
+void Mat2D::initHostArray(float* &mat) {
+  if (mat == NULL) {
+    printf("inreturnInit");
+    mat = new float[matSize];
+  }
+}
+float* Mat2D::gpuMalloc(sub_matrix matrix) {
+  float* mat;
+  //assignDeviceArray(mat, matrix);
+  //cudaError_t errCode = cudaMalloc(&mat, matSize);
+  //printf("GPU cudaMalloc: %s\n", cudaGetErrorString(errCode));
+  //return mat;
+  cudaError_t errCode;
+  if (dev == nullptr) {
+    printf("return dev array in first if\n");
+    initDeviceStruct();
+  }
+  if (matrix == Cells) {
+    errCode = cudaMalloc(&dev->cells, matSize);
+    mat = dev->cells;
+  } else if (matrix == Theta) {
+    errCode = cudaMalloc(&dev->dTh, matSize);
+    mat = dev->dTh;
+  } else {
+    errCode = cudaMalloc(&dev->dX, matSize);
+    mat = dev->dX;
+  }
+  printf("GPU cudaMalloc: %s\n", cudaGetErrorString(errCode));
+  return mat;
+}
+void Mat2D::gpuSetup(sub_matrix matrix) { 
+  float* send = returnArray(matrix);
+  gpuSetup(send, matrix);
+}
+void Mat2D::gpuSetup(float* send, sub_matrix matrix) {
+  float* d_mat = gpuMalloc(matrix);
+  gpuSend(send, d_mat);
+}
+void Mat2D::gpuSetup(float* to_cells, float* to_dTh, float* to_dX) {
+  gpuSetup(to_cells, Cells);
+  gpuSetup(to_dTh, Theta);
+  gpuSetup(to_dX, X);
+}
+void Mat2D::gpuSetup() {
+  gpuSetup(Cells);
+  gpuSetup(Theta);
+  gpuSetup(X);
+}
+void Mat2D::gpuSend(float* send, float* &mat) {
+  cudaError_t errCode = cudaMemcpy(mat, send, matSize, cudaMemcpyHostToDevice);
+  printf("Memcpy: %s\n", cudaGetErrorString(errCode));
+}
+void Mat2D::gpuRetrieve(sub_matrix matrix) {
+  float* d_mat;
+  assignDeviceArray(d_mat, matrix);
+  float* mat = returnArray(matrix);
+  cudaError_t errCode = cudaMemcpy(mat, d_mat, matSize, cudaMemcpyDeviceToHost);
+  printf("Retrieving nodes from GPU: %s\n", cudaGetErrorString(errCode));
+}
+void Mat2D::gpuRetrieve(bool free) {
+  gpuRetrieve();
+  if (free) gpuFree();
+}
+void Mat2D::gpuRetrieve() {
+  gpuRetrieve(Cells);
+  gpuRetrieve(Theta);
+  gpuRetrieve(X);
+}
+void Mat2D::gpuRetrieve(Mat2D* from, sub_matrix matrix) {
+  from->gpuRetrieve(matrix);
+  float* mat = returnArray(matrix);
+  *mat = *from->returnArray(matrix);
+}
+void Mat2D::gpuRetrieve(Mat2D* from) {
+  gpuRetrieve(from, Cells);
+  gpuRetrieve(from, Theta);
+  gpuRetrieve(from, X);
+}
+void Mat2D::gpuFree() {
+  cudaFree(dev->cells);
+  cudaFree(dev->dTh);
+  cudaFree(dev->dX);
+}
+void Mat2D::setSize(int in_rows, int in_cols) {
+  rows = in_rows;
+  columns = in_cols;
+  matSize = rows * columns * sizeof(float);
+}
+void Mat2D::addWeightArray() {
+  dTh = new float[matSize];
+  dX = new float[matSize];
+}
+void Mat2D::hardResize(int new_rows, int new_cols, float* &change) {
+  delete change;
+  setSize(new_rows, new_cols);
+  change = new float[matSize];
+}
+void Mat2D::softResize(int new_rows, int new_cols, float* &change) {
+  setSize(new_rows, new_cols);
+  float* temp;
+  temp = new float[matSize];
+  for (int i = 0; i < sizeof(*change) / sizeof(float) && i < rows * columns;
+                                                                         ++i) {
+    temp[i] = change[i];
+  }
+  delete change;
+  change = temp;
+}
+Mat2D* newMat2D(int in_rows, int in_cols) {
+  Mat2D *mat_ptr = new Mat2D(in_rows, in_cols);
+  return mat_ptr;
+}
+// Configuration class that holds the primary settings for the neural network.
 class Config {
 	std::string cfg;
 	//bool loaded;
 public:
-	//Config ();
+	// Config ();
 	Config (std::string);
 	~Config();
 	std::string in, act, out, timer;
-	//void reLoadConfig(std::string);
+	// void reLoadConfig(std::string);
 	int* nodesPerlayer;
 	int layers, batchSize;
 	float alpha;
@@ -117,21 +290,17 @@ Config::Config (std::string c = "") {
 	else {
 		cfg = "setup.csv";
 	}
-	
 	//Creating 2d vector of the setup file for easy access
-	//std::vector< std::vector<std::string> > lines;
 	std::vector< std::vector<std::string> > lines;
 	std::vector< std::string > w;
-
 	std::ifstream fIn(cfg);
-
 	for (std::string ln; getline(fIn, ln);) {
 		std::stringstream s(ln);
 		for (std::string wd; getline(s, wd, ',');) {
 			w.push_back(wd);
 		}
 		lines.push_back(w);
-		s.clear();//free mem
+		s.clear();
 		w.clear();
 	}
 	fIn.close();
@@ -153,13 +322,9 @@ Config::Config (std::string c = "") {
 	else {
 		timer = "";
 	}
-
 	//free some memory
-	
 	lines.clear();
-
 }
-
 //define destructor
 Config::~Config() {
 	//delete the allocated memory for nodesPerLayer
@@ -171,34 +336,7 @@ Config::~Config() {
 		
 //=========== Node Utilities =============
 
-void Print2DMatrix(Mat2D matrix, const char* label = "") { 
-	/*simple method to print matrix
-	  needs: nodeSet.h, string.h
-	  */
-	printf("%sMatrix Values:\n{\n", label); //just making it pretty
-	for (int i = 0; i < matrix.rows; ++i) { //iterate through each row/col and print
-		printf("    "); //again, making pretty
-		for (int t = 0; t < matrix.columns; ++t) {
-			printf("%f, ", matrix.cells[i*matrix.columns + t]);
-		}
-		printf("\n");
-	}
-	printf("}\n");
-
-	printf("%sUpdate Values:\n{\n", label); //just making it pretty
-	for (int c = 0; c < matrix.rows; ++c) { //iterate through each row/col and print
-		printf("    "); //again, making pretty
-		for (int b = 0; b < matrix.columns; ++b) {
-			printf("%f, ", matrix.dTh[c*matrix.columns + b]);
-		}
-		printf("\n");
-	}
-	printf("}\n");
-	//~~ALB
-	return;
-}
-
-void PointerPrint2DMatrix(Mat2D* matrix, const char* label = "") { 
+void Print2DMatrix(Mat2D* matrix, const char* label = "") { 
 	/*simple method to print matrix
 	needs: nodeSet.h, string.h
 	*/
@@ -310,10 +448,10 @@ Mat2D* CsvToMat2D(std::string input_string, int columns = 1) {
 		}
 	}
 
-	Mat2D* out = (Mat2D*)malloc(sizeof(Mat2D));
-	out->cells = (float*)malloc(values.size() * sizeof(float));
-	out->columns = columns;
-	out->rows = values.size() / columns;
+  Mat2D* out = newMat2D(values.size() / columns, columns);//(Mat2D*)malloc(sizeof(Mat2D));
+	//out->cells = (float*)malloc(values.size() * sizeof(float));
+	//out->columns = columns;
+	//out->rows = values.size() / columns;
 	for (int i = 0; i < (int)values.size(); ++i) {
 		float &t = values.at(i);
 		out->cells[i] = t;

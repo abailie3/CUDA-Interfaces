@@ -1,12 +1,16 @@
 #ifndef __TIMER_H__INCLUDED__
 #define __TIMER_H__INCLUDED__
 
+#define _CRTDBG_MAP_ALLOC_ // added for debug
+#include <stdlib.h>
+#include <crtdbg.h> // added for debug
+
 #include <ctime>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <stdio.h>
-#include <stdlib.h>
+
 #include <string.h>
 
 
