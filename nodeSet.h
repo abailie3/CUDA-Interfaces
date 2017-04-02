@@ -1,5 +1,5 @@
 /*
-====== CUDA matrix typedefs/functions v1.0 ======
+====== CUDA matrix typedefs/functions v1.1 ======
 	         		By: Austin Bailie
 
 Matrix typedefs with support for higher
@@ -16,21 +16,24 @@ v0: 1/15/2017
           -original
 
 v0.1: 1/21/2017		
-          -added include protection
-					-added math.h to support matOps.cu
-					-changed Mat2D to support linked lists
-					-added laySet to support neural net functionality
-					-relocated common functions from matOps.cu to this file
+  -added include protection
+	-added math.h to support matOps.cu
+	-changed Mat2D to support linked lists
+	-added laySet to support neural net functionality
+	-relocated common functions from matOps.cu to this file
 
 v0.2: 1/29/2017
-					-added dTh and dX fields to Mat2D
-					-minor additions/changes to common functions
+	-added dTh and dX fields to Mat2D
+	-minor additions/changes to common functions
 
 v1.0: 4/1/2017
-          -Changed Mat2D structure to d_Mat2D
-          -Implemented Mat2D class
-          -Changed malloc to new where appropriate
-          -Removed higher dimension matrix structure
+  -Changed Mat2D structure to d_Mat2D
+  -Implemented Mat2D class
+  -Changed malloc to new where appropriate
+  -Removed higher dimension matrix structure
+
+v1.1: 4/X/2017: Developing python interface
+  -Some re-structuring to address bugs.
 =================================================
 */
 
@@ -48,6 +51,10 @@ v1.0: 4/1/2017
 #include <math.h>
 #include <vector>
 //========== Custom Typedefs =============
+/*
+  I can't find a way to allocate the matrices to the gpu without using a
+  struct. Passing it as a class makes it fail.
+*/
 typedef struct d_Mat2D { //row then column
 	int rows;
 	int columns;
@@ -69,14 +76,17 @@ class Mat2D {
 public:
   Mat2D();
   Mat2D(int in_rows, int in_cols);
+  ~Mat2D();
   enum sub_matrix { Cells = 0, Theta = 1, X = 2 };
-  void addWeightArray();
+  void addHostArrays();
   void resize(int new_rows, int new_cols, sub_matrix matrix, bool hard);
+  void gpuDimSet();
   float* gpuMalloc(sub_matrix matrix);
+  void gpuSetup();
   void gpuSetup(sub_matrix matrix);
   void gpuSetup(float* send, sub_matrix matrix);
   void gpuSetup(float* to_cells, float* to_dTh, float* to_dX);
-  void gpuSetup();
+  void gpuSend();
   void gpuSend(float* send, float* &mat);
   void gpuRetrieve(sub_matrix matrix);
   void gpuRetrieve(bool free);
@@ -87,18 +97,20 @@ public:
   int rows = 0;
   int columns = 0;
   int run = 0;
-  float* dTh = nullptr; //new
-  float* dX = nullptr; //new
+  dim3 tPb;
+  dim3 nb;
+  float* dTh = nullptr;
+  float* dX = nullptr; 
   float* cells = nullptr;
   Mat2D* next = nullptr;
-  Mat2D* end =  nullptr;
-  d_Mat2D* dev = nullptr;
-  unsigned int matSize = 0;
+  Mat2D* end =  nullptr; 
+  d_Mat2D* dev = nullptr; //Device structure
+  unsigned int matSize; //size of matricies of float values
 private:
   void setSize(int in_rows, int in_cols);
   float* returnArray(sub_matrix matrix);
   void assignDeviceArray(float* &mat, sub_matrix matrix);
-  void initHostArray(float* &mat);
+  void initArray(float* &mat);
   void initDeviceStruct();
   void hardResize(int new_rows, int new_cols, float* &change);
   void softResize(int new_rows, int new_cols, float* &change);
@@ -108,7 +120,24 @@ Mat2D::Mat2D() {
 }
 Mat2D::Mat2D(int in_rows, int in_cols) {
   setSize(in_rows, in_cols);
-  cells = new float[matSize];
+  addHostArrays();
+  gpuSetup();
+}
+Mat2D::~Mat2D() {
+  //Delete all array members
+  if (dTh != nullptr) {
+    delete[] dTh;
+  }
+  if (dX != nullptr) {
+    delete[] dX;
+  }
+  if (cells != nullptr) {
+    delete[] cells;
+  }
+  //Free device struct
+  if (dev != nullptr) {
+    free(dev);
+  }
 }
 void Mat2D::resize(int new_rows, int new_cols, sub_matrix matrix, 
                                                bool hard = false) {
@@ -124,13 +153,13 @@ void Mat2D::resize(int new_rows, int new_cols, sub_matrix matrix,
 }
 float* Mat2D::returnArray(sub_matrix matrix) {
   if (matrix == Cells) {
-    initHostArray(cells);
+    initArray(cells);
     return cells;
   } else if (matrix == Theta) {
-    initHostArray(dTh);
+    initArray(dTh);
     return dTh;
   } else {
-    initHostArray(dX);
+    initArray(dX);
     return dX;
   }
 }
@@ -140,13 +169,13 @@ void Mat2D::assignDeviceArray(float* &mat, sub_matrix matrix) {
     initDeviceStruct();
   }
   if (matrix == Cells) {
-    initHostArray(dev->cells);
+    initArray(dev->cells);
     mat = dev->cells;
   } else if (matrix == Theta) {
-    initHostArray(dev->dTh);
+    initArray(dev->dTh);
     mat = dev->dTh;
   } else {
-    initHostArray(dev->dX);
+    initArray(dev->dX);
     mat = dev->dX;
   }
 }
@@ -155,18 +184,20 @@ void Mat2D::initDeviceStruct() {
   dev->rows = rows;
   dev->columns = columns;
 }
-void Mat2D::initHostArray(float* &mat) {
+void Mat2D::initArray(float* &mat) {
   if (mat == NULL) {
     printf("inreturnInit");
     mat = new float[matSize];
   }
 }
+void Mat2D::gpuDimSet() {
+  dim3 tpb_n(16, 16);
+  tPb = tpb_n;
+  dim3 nb_n((unsigned int)ceil((double)columns / tPb.x), (unsigned int)ceil((double)rows / tPb.y));
+  nb = nb_n;
+}
 float* Mat2D::gpuMalloc(sub_matrix matrix) {
   float* mat;
-  //assignDeviceArray(mat, matrix);
-  //cudaError_t errCode = cudaMalloc(&mat, matSize);
-  //printf("GPU cudaMalloc: %s\n", cudaGetErrorString(errCode));
-  //return mat;
   cudaError_t errCode;
   if (dev == nullptr) {
     printf("return dev array in first if\n");
@@ -185,12 +216,18 @@ float* Mat2D::gpuMalloc(sub_matrix matrix) {
   printf("GPU cudaMalloc: %s\n", cudaGetErrorString(errCode));
   return mat;
 }
+void Mat2D::gpuSetup() {
+  gpuSetup(Cells);
+  gpuSetup(Theta);
+  gpuSetup(X);
+}
 void Mat2D::gpuSetup(sub_matrix matrix) { 
   float* send = returnArray(matrix);
   gpuSetup(send, matrix);
 }
 void Mat2D::gpuSetup(float* send, sub_matrix matrix) {
   float* d_mat = gpuMalloc(matrix);
+  gpuDimSet();
   gpuSend(send, d_mat);
 }
 void Mat2D::gpuSetup(float* to_cells, float* to_dTh, float* to_dX) {
@@ -198,10 +235,10 @@ void Mat2D::gpuSetup(float* to_cells, float* to_dTh, float* to_dX) {
   gpuSetup(to_dTh, Theta);
   gpuSetup(to_dX, X);
 }
-void Mat2D::gpuSetup() {
-  gpuSetup(Cells);
-  gpuSetup(Theta);
-  gpuSetup(X);
+void Mat2D::gpuSend() {
+  gpuSend(cells, dev->cells);
+  gpuSend(dTh, dev->dTh);
+  gpuSend(dX, dev->dX);
 }
 void Mat2D::gpuSend(float* send, float* &mat) {
   cudaError_t errCode = cudaMemcpy(mat, send, matSize, cudaMemcpyHostToDevice);
@@ -243,7 +280,8 @@ void Mat2D::setSize(int in_rows, int in_cols) {
   columns = in_cols;
   matSize = rows * columns * sizeof(float);
 }
-void Mat2D::addWeightArray() {
+void Mat2D::addHostArrays() {
+  cells = new float[matSize];
   dTh = new float[matSize];
   dX = new float[matSize];
 }
