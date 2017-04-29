@@ -1,0 +1,42 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 14
+VisualStudioVersion = 14.0.25420.1
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "neuralnet", "vb.vcxproj", "{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}"
+EndProject
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "pyInterFace", "..\Python\pyInterFace\pyInterFace.pyproj", "{428604C2-D789-4A8B-AD34-0BAEA811DD92}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Debug|Any CPU.ActiveCfg = Debug|Win32
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Debug|x64.ActiveCfg = Debug|x64
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Debug|x64.Build.0 = Debug|x64
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Debug|x86.ActiveCfg = Release|x64
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Debug|x86.Build.0 = Release|x64
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Release|Any CPU.ActiveCfg = Release|Win32
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Release|x64.ActiveCfg = Release|x64
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Release|x64.Build.0 = Release|x64
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Release|x64.Deploy.0 = Release|x64
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Release|x86.ActiveCfg = Release|Win32
+		{265F9ED7-C84E-4C5C-A7EF-90D24D3CDC2D}.Release|x86.Build.0 = Release|Win32
+		{428604C2-D789-4A8B-AD34-0BAEA811DD92}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{428604C2-D789-4A8B-AD34-0BAEA811DD92}.Debug|x64.ActiveCfg = Release|Any CPU
+		{428604C2-D789-4A8B-AD34-0BAEA811DD92}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{428604C2-D789-4A8B-AD34-0BAEA811DD92}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{428604C2-D789-4A8B-AD34-0BAEA811DD92}.Release|x64.ActiveCfg = Release|Any CPU
+		{428604C2-D789-4A8B-AD34-0BAEA811DD92}.Release|x64.Deploy.0 = Release|Any CPU
+		{428604C2-D789-4A8B-AD34-0BAEA811DD92}.Release|x86.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

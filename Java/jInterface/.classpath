@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER">
+		<attributes>
+			<attribute name="org.eclipse.jdt.launching.CLASSPATH_ATTR_LIBRARY_PATH_ENTRY" value="C:/Users/albgk/Documents/GitHub/ML-NN-Repo/C/x64/Release"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="lib" path="C:/Users/albgk/Documents/GitHub/ML-NN-Repo/Java/imports/commons-csv-1.4/commons-csv-1.4.jar"/>
+	<classpathentry kind="lib" path="C:/Users/albgk/Documents/GitHub/ML-NN-Repo/Java/imports/commons-csv-1.4/commons-csv-1.4-sources.jar"/>
+	<classpathentry kind="lib" path="C:/Users/albgk/Documents/GitHub/ML-NN-Repo/Java/imports/commons-lang3-3.5/commons-lang3-3.5.jar"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>
